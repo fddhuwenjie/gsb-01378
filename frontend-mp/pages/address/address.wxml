@@ -1,0 +1,90 @@
+<view class="page">
+  <!-- 地址列表 -->
+  <scroll-view class="address-scroll" scroll-y wx:if="{{!loading}}">
+    <view class="address-list" wx:if="{{addresses.length > 0}}">
+      <view class="address-item" wx:for="{{addresses}}" wx:key="id">
+        <view class="address-main" bindtap="editAddress" data-item="{{item}}">
+          <view class="address-user">
+            <text class="user-name">{{item.name}}</text>
+            <text class="user-phone">{{item.phone}}</text>
+            <text class="default-tag" wx:if="{{item.is_default}}">默认</text>
+          </view>
+          <view class="address-detail">{{item.region}} {{item.detail}}</view>
+        </view>
+        <view class="address-actions">
+          <view class="action-item" bindtap="setDefault" data-id="{{item.id}}" wx:if="{{!item.is_default}}">
+            <text class="action-icon">○</text>
+            <text>设为默认</text>
+          </view>
+          <view class="action-item active" wx:if="{{item.is_default}}">
+            <text class="action-icon">●</text>
+            <text>默认地址</text>
+          </view>
+          <view class="action-item" bindtap="editAddress" data-item="{{item}}">
+            <text class="action-icon">✏️</text>
+            <text>编辑</text>
+          </view>
+          <view class="action-item" bindtap="deleteAddress" data-id="{{item.id}}">
+            <text class="action-icon">🗑️</text>
+            <text>删除</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 空状态 -->
+    <view class="empty" wx:if="{{addresses.length === 0}}">
+      <text class="empty-icon">📍</text>
+      <text class="empty-text">暂无收货地址</text>
+    </view>
+  </scroll-view>
+
+  <!-- 加载中 -->
+  <view class="loading" wx:if="{{loading}}">加载中...</view>
+
+  <!-- 添加按钮 -->
+  <view class="add-btn" bindtap="showAddForm">+ 新增收货地址</view>
+
+  <!-- 表单弹窗 -->
+  <view class="form-modal" wx:if="{{showForm}}">
+    <view class="form-mask" bindtap="closeForm"></view>
+    <view class="form-content">
+      <view class="form-header">
+        <text class="form-title">{{editId ? '编辑地址' : '新增地址'}}</text>
+        <text class="form-close" bindtap="closeForm">×</text>
+      </view>
+      <view class="form-body">
+        <view class="form-item">
+          <text class="form-label">收货人</text>
+          <input class="form-input" placeholder="请输入收货人姓名" value="{{form.name}}" bindinput="onInput" data-field="name" />
+        </view>
+        <view class="form-item">
+          <text class="form-label">手机号</text>
+          <input class="form-input" type="number" maxlength="11" placeholder="请输入手机号" value="{{form.phone}}" bindinput="onInput" data-field="phone" />
+        </view>
+        <view class="form-item">
+          <text class="form-label">所在地区</text>
+          <picker mode="region" bindchange="onRegionChange" value="{{regionArray}}">
+            <view class="form-picker">
+              <text class="form-input {{form.region ? '' : 'placeholder'}}">{{form.region || '请选择省市区'}}</text>
+              <text class="form-arrow">›</text>
+            </view>
+          </picker>
+        </view>
+        <view class="form-item">
+          <text class="form-label">详细地址</text>
+          <input class="form-input" placeholder="请输入详细地址" value="{{form.detail}}" bindinput="onInput" data-field="detail" />
+        </view>
+        <view class="form-item" bindtap="toggleDefault">
+          <text class="form-label">设为默认</text>
+          <view class="form-switch {{form.is_default ? 'active' : ''}}">
+            <view class="switch-dot"></view>
+          </view>
+        </view>
+      </view>
+      <view class="form-footer">
+        <view class="save-btn" bindtap="saveAddress">保存</view>
+      </view>
+    </view>
+  </view>
+</view>

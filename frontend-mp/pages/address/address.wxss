@@ -1,0 +1,276 @@
+.page {
+  height: 100vh;
+  background: var(--gray-bg);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.address-scroll {
+  flex: 1;
+  height: 0;
+}
+
+/* 地址列表 */
+.address-list {
+  padding: 20rpx;
+  padding-bottom: 140rpx;
+}
+
+.address-item {
+  background: var(--white);
+  border-radius: 12rpx;
+  margin-bottom: 20rpx;
+  overflow: hidden;
+}
+
+.address-main {
+  padding: 24rpx;
+}
+
+.address-user {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12rpx;
+}
+
+.user-name {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--black);
+  margin-right: 20rpx;
+}
+
+.user-phone {
+  font-size: 28rpx;
+  color: var(--gray-dark);
+}
+
+.default-tag {
+  margin-left: 16rpx;
+  padding: 4rpx 12rpx;
+  background: var(--red);
+  color: var(--white);
+  font-size: 20rpx;
+  border-radius: 4rpx;
+}
+
+.address-detail {
+  font-size: 28rpx;
+  color: var(--gray-dark);
+  line-height: 1.5;
+}
+
+.address-actions {
+  display: flex;
+  border-top: 1rpx solid #F5F5F5;
+  padding: 16rpx 24rpx;
+}
+
+.action-item {
+  display: flex;
+  align-items: center;
+  margin-right: 40rpx;
+  font-size: 24rpx;
+  color: var(--gray);
+}
+
+.action-item.active {
+  color: var(--red);
+}
+
+.action-icon {
+  margin-right: 8rpx;
+}
+
+/* 空状态 */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 120rpx 40rpx;
+  padding-bottom: 200rpx;
+}
+
+.empty-icon {
+  font-size: 100rpx;
+  opacity: 0.3;
+  margin-bottom: 20rpx;
+}
+
+.empty-text {
+  color: var(--gray);
+  font-size: 28rpx;
+}
+
+.loading {
+  text-align: center;
+  padding: 60rpx;
+  color: var(--gray);
+}
+
+/* 添加按钮 */
+.add-btn {
+  position: fixed;
+  left: 20rpx;
+  right: 20rpx;
+  bottom: 40rpx;
+  height: 88rpx;
+  background: linear-gradient(90deg, var(--red) 0%, var(--red-light) 100%);
+  color: var(--white);
+  border-radius: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 500;
+}
+
+/* 表单弹窗 */
+.form-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+}
+
+.form-mask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+}
+
+.form-content {
+  position: relative;
+  width: 100%;
+  background: var(--white);
+  border-radius: 24rpx 24rpx 0 0;
+  max-height: 85vh;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32rpx;
+  border-bottom: 1rpx solid #F5F5F5;
+  flex-shrink: 0;
+}
+
+.form-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--black);
+}
+
+.form-close {
+  font-size: 48rpx;
+  color: var(--gray);
+  line-height: 1;
+}
+
+.form-body {
+  padding: 0 32rpx;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.form-item {
+  display: flex;
+  align-items: center;
+  padding: 28rpx 0;
+  border-bottom: 1rpx solid #F5F5F5;
+}
+
+.form-label {
+  width: 160rpx;
+  font-size: 28rpx;
+  color: var(--black);
+  flex-shrink: 0;
+}
+
+.form-input {
+  flex: 1;
+  font-size: 28rpx;
+  color: var(--black);
+}
+
+.form-input.placeholder {
+  color: var(--gray-light);
+}
+
+.form-arrow {
+  font-size: 28rpx;
+  color: var(--gray-light);
+}
+
+.form-picker {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.form-picker .form-input {
+  flex: 1;
+}
+
+.form-picker .form-arrow {
+  margin-left: 8rpx;
+}
+
+.form-switch {
+  width: 100rpx;
+  height: 56rpx;
+  background: #E5E5E5;
+  border-radius: 28rpx;
+  position: relative;
+  transition: background 0.3s;
+}
+
+.form-switch.active {
+  background: var(--red);
+}
+
+.switch-dot {
+  position: absolute;
+  top: 4rpx;
+  left: 4rpx;
+  width: 48rpx;
+  height: 48rpx;
+  background: var(--white);
+  border-radius: 50%;
+  transition: left 0.3s;
+}
+
+.form-switch.active .switch-dot {
+  left: 48rpx;
+}
+
+.form-footer {
+  padding: 24rpx 32rpx;
+  padding-bottom: calc(24rpx + constant(safe-area-inset-bottom));
+  padding-bottom: calc(24rpx + env(safe-area-inset-bottom));
+  flex-shrink: 0;
+}
+
+.save-btn {
+  height: 88rpx;
+  background: linear-gradient(90deg, var(--red) 0%, var(--red-light) 100%);
+  color: var(--white);
+  border-radius: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 500;
+}

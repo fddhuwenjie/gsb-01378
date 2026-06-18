@@ -1,0 +1,40 @@
+<view class="page">
+  <!-- 左侧分类 -->
+  <scroll-view class="cate-nav" scroll-y>
+    <view 
+      class="cate-item {{currentCategory === item.id ? 'active' : ''}}" 
+      wx:for="{{categories}}" 
+      wx:key="id"
+      bindtap="selectCategory"
+      data-id="{{item.id}}"
+    >
+      <text class="cate-icon">{{item.icon}}</text>
+      <text class="cate-name">{{item.name}}</text>
+    </view>
+  </scroll-view>
+
+  <!-- 右侧商品 -->
+  <scroll-view class="goods-area" scroll-y bindscrolltolower="loadMore">
+    <view class="goods-item" wx:for="{{products}}" wx:key="id">
+      <image class="goods-img" src="{{item.image}}" mode="aspectFill" bindtap="goProduct" data-id="{{item.id}}" />
+      <view class="goods-info" bindtap="goProduct" data-id="{{item.id}}">
+        <text class="goods-name">{{item.name}}</text>
+        <text class="goods-desc">{{item.description}}</text>
+        <view class="goods-row">
+          <view class="price">
+            <text class="price-symbol">¥</text>
+            <text class="price-int">{{item.price}}</text>
+          </view>
+          <view class="add-cart-btn" catchtap="addToCart" data-item="{{item}}">+</view>
+        </view>
+      </view>
+    </view>
+    
+    <view class="status-bar" wx:if="{{loading}}">加载中...</view>
+    <view class="status-bar" wx:if="{{!hasMore && products.length > 0}}">没有更多了</view>
+    <view class="empty" wx:if="{{!loading && products.length === 0}}">
+      <text class="empty-icon">📦</text>
+      <text class="empty-text">暂无商品</text>
+    </view>
+  </scroll-view>
+</view>

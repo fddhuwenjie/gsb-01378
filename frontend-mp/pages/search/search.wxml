@@ -1,0 +1,63 @@
+<view class="page">
+  <!-- 搜索栏 -->
+  <view class="search-header">
+    <view class="search-box">
+      <text class="search-icon">🔍</text>
+      <input class="search-input" placeholder="搜索商品" value="{{keyword}}" bindinput="onInput" bindconfirm="doSearch" focus="{{true}}" />
+      <text class="clear-btn" wx:if="{{keyword}}" bindtap="clearKeyword">×</text>
+    </view>
+    <text class="cancel-btn" bindtap="goBack">取消</text>
+  </view>
+
+  <!-- 搜索历史 -->
+  <view class="history-section" wx:if="{{!keyword && history.length > 0}}">
+    <view class="section-head">
+      <text class="section-title">搜索历史</text>
+      <text class="clear-history" bindtap="clearHistory">清空</text>
+    </view>
+    <view class="tag-list">
+      <text class="tag" wx:for="{{history}}" wx:key="*this" bindtap="searchByTag" data-keyword="{{item}}">{{item}}</text>
+    </view>
+  </view>
+
+  <!-- 热门搜索 -->
+  <view class="hot-section" wx:if="{{!keyword}}">
+    <view class="section-head">
+      <text class="section-title">热门搜索</text>
+    </view>
+    <view class="tag-list">
+      <text class="tag hot" wx:for="{{hotWords}}" wx:key="*this" bindtap="searchByTag" data-keyword="{{item}}">{{item}}</text>
+    </view>
+  </view>
+
+  <!-- 搜索结果 -->
+  <view class="result-section" wx:if="{{searched}}">
+    <view class="result-count" wx:if="{{products.length > 0}}">找到 {{total}} 件商品</view>
+    
+    <view class="product-list">
+      <view class="product-item" wx:for="{{products}}" wx:key="id" bindtap="goProduct" data-id="{{item.id}}">
+        <image class="product-img" src="{{item.image}}" mode="aspectFill" />
+        <view class="product-info">
+          <text class="product-name">{{item.name}}</text>
+          <text class="product-desc">{{item.description}}</text>
+          <view class="product-bottom">
+            <view class="price-wrap">
+              <text class="price price-sm">¥</text>
+              <text class="price price-md">{{item.price}}</text>
+              <text class="price-old" wx:if="{{item.original_price > item.price}}">¥{{item.original_price}}</text>
+            </view>
+            <text class="sales">已售{{item.sales || 0}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+    
+    <view class="empty" wx:if="{{products.length === 0 && !loading}}">
+      <text class="empty-icon">🔍</text>
+      <text class="empty-text">未找到相关商品</text>
+    </view>
+    
+    <view class="loading" wx:if="{{loading}}">加载中...</view>
+    <view class="no-more" wx:if="{{!hasMore && products.length > 0}}">没有更多了</view>
+  </view>
+</view>

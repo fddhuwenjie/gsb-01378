@@ -1,0 +1,77 @@
+<view class="page" wx:if="{{product}}">
+  <!-- 商品图片 -->
+  <view class="img-section">
+    <image class="main-img" src="{{product.image}}" mode="aspectFill" bindtap="previewImage" />
+  </view>
+
+  <!-- 价格信息 -->
+  <view class="info-card">
+    <view class="price-row">
+      <view class="main-price">
+        <text class="price-symbol">¥</text>
+        <text class="price-value">{{product.price}}</text>
+      </view>
+      <text class="old-price" wx:if="{{product.original_price > product.price}}">¥{{product.original_price}}</text>
+      <view class="discount-tag" wx:if="{{product.original_price > product.price}}">立省¥{{product.original_price - product.price}}</view>
+    </view>
+    <text class="product-title">{{product.name}}</text>
+    <view class="info-stats">
+      <view class="stat-item">销量 <text class="stat-value">{{product.sales || 0}}</text></view>
+      <view class="stat-item">库存 <text class="stat-value">{{product.stock}}</text></view>
+    </view>
+  </view>
+
+  <!-- 商品详情 -->
+  <view class="detail-card">
+    <view class="detail-title">商品详情</view>
+    <text class="detail-text">{{product.description || '暂无详情'}}</text>
+  </view>
+
+  <!-- 底部操作 -->
+  <view class="action-bar safe-bottom">
+    <view class="action-icons">
+      <view class="action-icon-item" bindtap="goHome">
+        <text class="action-icon">🏠</text>
+        <text class="action-icon-text">首页</text>
+      </view>
+      <view class="action-icon-item" bindtap="goCart">
+        <text class="action-icon">🛒</text>
+        <text class="action-icon-text">购物车</text>
+      </view>
+    </view>
+    <view class="action-btns">
+      <view class="action-btn btn-cart" bindtap="addToCart">加入购物车</view>
+      <view class="action-btn btn-buy" bindtap="buyNow">立即购买</view>
+    </view>
+  </view>
+
+  <!-- 数量选择弹窗 -->
+  <view class="qty-modal" wx:if="{{showQtyModal}}" bindtap="closeQtyModal">
+    <view class="qty-content" catchtap="">
+      <view class="qty-header">
+        <image class="qty-img" src="{{product.image}}" mode="aspectFill" />
+        <view class="qty-info">
+          <view class="qty-price">
+            <text class="price-symbol">¥</text>
+            <text class="price-value">{{product.price}}</text>
+          </view>
+          <text class="qty-stock">库存 {{product.stock}} 件</text>
+        </view>
+        <view class="qty-close" bindtap="closeQtyModal">×</view>
+      </view>
+      <view class="qty-body">
+        <text class="qty-label">购买数量</text>
+        <view class="qty-ctrl">
+          <view class="qty-btn {{quantity <= 1 ? 'disabled' : ''}}" bindtap="minus">－</view>
+          <text class="qty-num">{{quantity}}</text>
+          <view class="qty-btn {{quantity >= product.stock ? 'disabled' : ''}}" bindtap="plus">＋</view>
+        </view>
+      </view>
+      <view class="qty-footer">
+        <view class="qty-confirm {{buyMode === 'cart' ? 'btn-cart' : 'btn-buy'}}" bindtap="confirmAction">确定</view>
+      </view>
+    </view>
+  </view>
+</view>
+
+<view class="loading-page" wx:if="{{!product}}">加载中...</view>

@@ -1,0 +1,199 @@
+/* 购物车 - 京东风格 */
+.page {
+  min-height: 100vh;
+  background: var(--gray-bg);
+  padding-bottom: 140rpx;
+}
+
+/* 空状态 */
+.empty-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 200rpx;
+}
+
+.empty-icon {
+  font-size: 120rpx;
+  opacity: 0.3;
+  margin-bottom: 24rpx;
+}
+
+.empty-title {
+  font-size: 32rpx;
+  color: var(--black);
+}
+
+.empty-desc {
+  font-size: 26rpx;
+  color: var(--gray);
+  margin-top: 8rpx;
+}
+
+/* 购物车列表 */
+.cart-list {
+  padding: 20rpx;
+}
+
+.cart-item {
+  display: flex;
+  align-items: center;
+  background: var(--white);
+  border-radius: 12rpx;
+  padding: 20rpx;
+  margin-bottom: 16rpx;
+  position: relative;
+}
+
+/* 复选框 */
+.checkbox {
+  width: 40rpx;
+  height: 40rpx;
+  border: 2rpx solid var(--gray-light);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 16rpx;
+  flex-shrink: 0;
+}
+
+.checkbox.checked {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.check-icon {
+  color: var(--white);
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+/* 商品信息 */
+.item-img {
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 8rpx;
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.item-info {
+  flex: 1;
+  margin-left: 16rpx;
+  display: flex;
+  flex-direction: column;
+  height: 160rpx;
+}
+
+.item-name {
+  font-size: 28rpx;
+  color: var(--black);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.item-bottom {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 数量控制 */
+.qty-ctrl {
+  display: flex;
+  align-items: center;
+  background: var(--gray-bg);
+  border-radius: 6rpx;
+}
+
+.qty-btn {
+  width: 52rpx;
+  height: 48rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  color: var(--black);
+}
+
+.qty-num {
+  width: 56rpx;
+  text-align: center;
+  font-size: 26rpx;
+  font-weight: 600;
+}
+
+/* 删除 */
+.del-btn {
+  position: absolute;
+  top: 12rpx;
+  right: 12rpx;
+  width: 44rpx;
+  height: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gray);
+  font-size: 36rpx;
+}
+
+/* 底部结算 */
+.settle-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--white);
+  display: flex;
+  align-items: center;
+  padding: 16rpx 20rpx;
+  padding-bottom: calc(16rpx + constant(safe-area-inset-bottom));
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  box-shadow: 0 -2rpx 12rpx rgba(0,0,0,0.06);
+}
+
+.select-all {
+  display: flex;
+  align-items: center;
+  font-size: 26rpx;
+  color: var(--black);
+}
+
+.select-all .checkbox {
+  margin-right: 8rpx;
+}
+
+.total-box {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  margin-right: 16rpx;
+}
+
+.total-label {
+  font-size: 26rpx;
+  color: var(--gray-dark);
+}
+
+.settle-btn {
+  min-width: 200rpx;
+  height: 76rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--red);
+  color: var(--white);
+  border-radius: 38rpx;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.settle-btn.disabled {
+  background: var(--gray-light);
+}
