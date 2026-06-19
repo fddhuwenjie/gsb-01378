@@ -20,6 +20,7 @@ const statusMap = {
   shipped: { text: '已发货', color: 'cyan' },
   completed: { text: '已完成', color: 'green' },
   cancelled: { text: '已取消', color: 'red' },
+  timeout: { text: '已超时', color: 'default' },
 }
 
 const statusOptions = [
@@ -28,7 +29,15 @@ const statusOptions = [
   { value: 'shipped', label: '已发货' },
   { value: 'completed', label: '已完成' },
   { value: 'cancelled', label: '已取消' },
+  { value: 'timeout', label: '已超时' },
 ]
+
+function formatRemainingTime(seconds) {
+  if (!seconds || seconds <= 0) return '已超时'
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}分${secs}秒`
+}
 
 export default function Orders() {
   const [orders, setOrders] = useState([])
@@ -115,6 +124,19 @@ export default function Orders() {
           options={statusOptions}
         />
       ),
+    },
+    {
+      title: '支付剩余',
+      key: 'pay_remaining',
+      width: 100,
+      render: (_, record) => {
+        if (record.status !== 'pending') return '-'
+        return (
+          <Tag color={record.pay_expired ? 'red' : 'orange'}>
+            {record.pay_expired ? '已超时' : formatRemainingTime(record.pay_expire_remaining)}
+          </Tag>
+        )
+      },
     },
     {
       title: '下单时间',

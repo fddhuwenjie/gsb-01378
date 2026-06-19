@@ -1,5 +1,9 @@
 const app = getApp()
 
+function generateIdempotencyKey() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 10)
+}
+
 Page({
   data: {
     items: [],
@@ -8,10 +12,13 @@ Page({
     showAddressPicker: false,
     remark: '',
     totalAmount: 0,
-    submitting: false
+    submitting: false,
+    idempotencyKey: ''
   },
 
   onLoad(options) {
+    this.setData({ idempotencyKey: generateIdempotencyKey() })
+
     if (options.items) {
       try {
         const items = JSON.parse(decodeURIComponent(options.items))
@@ -26,7 +33,6 @@ Page({
   },
 
   onShow() {
-    // 从地址页返回时刷新地址列表
     this.loadAddresses()
   },
 
@@ -35,7 +41,6 @@ Page({
     app.request({ url: '/addresses' }).then(function(res) {
       const addresses = res || []
       that.setData({ addresses })
-      // 自动选择默认地址
       if (!that.data.selectedAddress && addresses.length > 0) {
         const defaultAddr = addresses.find(a => a.is_default) || addresses[0]
         that.setData({ selectedAddress: defaultAddr })
@@ -69,7 +74,7 @@ Page({
   },
 
   async submitOrder() {
-    const { items, selectedAddress, remark, submitting } = this.data
+    const { items, selectedAddress, remark, submitting, idempotencyKey } = this.data
     
     if (submitting) return
     
@@ -94,22 +99,27 @@ Page({
           address: selectedAddress.region + ' ' + selectedAddress.detail,
           receiver_name: selectedAddress.name,
           receiver_phone: selectedAddress.phone,
-          remark
+          remark,
+          idempotency_key: idempotencyKey
         }
       })
 
       wx.showToast({
-        title: '下单成功',
+        title: res.duplicated ? '订单已存在' : '下单成功',
         icon: 'success'
       })
 
       setTimeout(() => {
         wx.redirectTo({
-          url: `/pages/order-detail/order-detail`
+          url: `/pages/order-detail/order-detail?id=${res.order_id}`
         })
       }, 1500)
     } catch (err) {
       console.error('提交订单失败', err)
+      wx.showToast({ 
+        title: err.error || '下单失败', 
+        icon: 'none' 
+      })
     } finally {
       this.setData({ submitting: false })
     }

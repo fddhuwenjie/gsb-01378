@@ -5,6 +5,67 @@ const bcrypt = require('bcryptjs');
 const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/shop.db');
 const db = new Database(dbPath);
 
+function columnExists(tableName, columnName) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return columns.some(c => c.name === columnName);
+}
+
+function addColumnIfMissing(table, colDef) {
+  const colName = colDef.split(' ')[0];
+  if (columnExists(table, colName)) {
+    return;
+  }
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${colDef}`);
+    console.log(`🔄 添加字段: ${table}.${colName}`);
+  } catch(e) {
+    if (e.message.includes('non-constant default')) {
+      console.log(`🔄 添加字段 ${table}.${colName}（使用 NULL 默认值兼容旧数据）...`);
+      const nullDef = colDef.replace(/DEFAULT\s+CURRENT_TIMESTAMP/i, 'DEFAULT NULL');
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${nullDef}`);
+      const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      db.exec(`UPDATE ${table} SET ${colName} = ?` , [now]);
+      console.log(`🔄 添加字段: ${table}.${colName}（已填充时间）`);
+    } else {
+      throw e;
+    }
+  }
+}
+
+function migrateSchema() {
+  const hasOldStock = columnExists('products', 'stock');
+  const hasTotalStock = columnExists('products', 'total_stock');
+
+  if (hasOldStock && !hasTotalStock) {
+    console.log('🔄 检测到旧版数据库，开始迁移库存字段...');
+    addColumnIfMissing('products', 'total_stock INTEGER DEFAULT 0');
+    addColumnIfMissing('products', 'locked_stock INTEGER DEFAULT 0');
+    addColumnIfMissing('products', 'sold_stock INTEGER DEFAULT 0');
+    db.exec(`UPDATE products SET total_stock = stock WHERE stock IS NOT NULL`);
+    db.exec(`UPDATE products SET locked_stock = 0, sold_stock = 0`);
+    console.log('✅ 库存字段迁移完成');
+  } else {
+    addColumnIfMissing('products', 'total_stock INTEGER DEFAULT 0');
+    addColumnIfMissing('products', 'locked_stock INTEGER DEFAULT 0');
+    addColumnIfMissing('products', 'sold_stock INTEGER DEFAULT 0');
+  }
+
+  addColumnIfMissing('products', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfMissing('products', 'original_price REAL');
+  addColumnIfMissing('products', 'images TEXT DEFAULT \'[]\'');
+  addColumnIfMissing('products', 'description TEXT DEFAULT \'\'');
+
+  addColumnIfMissing('orders', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfMissing('orders', 'idempotency_key TEXT');
+  addColumnIfMissing('orders', 'pay_expire_time DATETIME');
+  addColumnIfMissing('orders', 'paid_at DATETIME');
+  addColumnIfMissing('orders', 'cancelled_at DATETIME');
+  addColumnIfMissing('orders', 'address TEXT DEFAULT \'\'');
+  addColumnIfMissing('orders', 'receiver_name TEXT DEFAULT \'\'');
+  addColumnIfMissing('orders', 'receiver_phone TEXT DEFAULT \'\'');
+  addColumnIfMissing('orders', 'remark TEXT DEFAULT \'\'');
+}
+
 function initDatabase() {
   // 创建用户表
   db.exec(`
@@ -32,7 +93,7 @@ function initDatabase() {
     )
   `);
 
-  // 创建商品表
+  // 创建商品表（三库存模型：总库存、预占库存、已售库存）
   db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,16 +101,20 @@ function initDatabase() {
       description TEXT DEFAULT '',
       price REAL NOT NULL,
       original_price REAL,
-      stock INTEGER DEFAULT 0,
-      sales INTEGER DEFAULT 0,
+      total_stock INTEGER DEFAULT 0,
+      locked_stock INTEGER DEFAULT 0,
+      sold_stock INTEGER DEFAULT 0,
       category_id INTEGER,
       image TEXT DEFAULT '',
       images TEXT DEFAULT '[]',
       status INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (category_id) REFERENCES categories(id)
     )
   `);
+
+  migrateSchema();
 
   // 创建订单表
   db.exec(`
@@ -59,11 +124,16 @@ function initDatabase() {
       user_id INTEGER NOT NULL,
       total_amount REAL NOT NULL,
       status TEXT DEFAULT 'pending',
+      pay_expire_time DATETIME,
+      paid_at DATETIME,
+      cancelled_at DATETIME,
       address TEXT DEFAULT '',
       receiver_name TEXT DEFAULT '',
       receiver_phone TEXT DEFAULT '',
       remark TEXT DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      idempotency_key TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
@@ -112,6 +182,44 @@ function initDatabase() {
     )
   `);
 
+  // 创建库存流水表（用于审计追踪，防双重扣减/回滚）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      order_id INTEGER,
+      order_no TEXT,
+      operation_type TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      before_total_stock INTEGER DEFAULT 0,
+      before_locked_stock INTEGER DEFAULT 0,
+      before_sold_stock INTEGER DEFAULT 0,
+      after_total_stock INTEGER DEFAULT 0,
+      after_locked_stock INTEGER DEFAULT 0,
+      after_sold_stock INTEGER DEFAULT 0,
+      idempotency_key TEXT,
+      remark TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+    )
+  `);
+
+  // 为订单表添加 stock_processed 字段标记库存是否已处理，防止重复操作
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_processed_flags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL UNIQUE,
+      order_no TEXT NOT NULL,
+      locked INTEGER DEFAULT 0,
+      confirmed INTEGER DEFAULT 0,
+      released INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+    )
+  `);
+
   // 插入默认管理员账号
   const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
   if (!adminExists) {
@@ -138,25 +246,25 @@ function initDatabase() {
   const productCount = db.prepare('SELECT COUNT(*) as count FROM products').get();
   if (productCount.count === 0) {
     const products = [
-      // 数码产品
-      { name: 'MacBook Pro 笔记本', description: 'M3芯片 | 14英寸 | 18小时续航', price: 10999, original_price: 11999, stock: 50, sales: 890, category_id: 1, image: 'https://cdn.dummyjson.com/product-images/laptops/apple-macbook-pro-14-inch-space-grey/1.webp' },
-      { name: 'Samsung Galaxy 手机', description: '高清屏幕 | 快速充电 | 拍照神器', price: 5999, original_price: 6499, stock: 200, sales: 5620, category_id: 1, image: 'https://cdn.dummyjson.com/product-images/smartphones/samsung-galaxy-s7/1.webp' },
-      { name: 'iPhone 充电器', description: '快速充电 | 原装品质 | 安全可靠', price: 199, original_price: 299, stock: 500, sales: 8900, category_id: 1, image: 'https://cdn.dummyjson.com/product-images/mobile-accessories/apple-iphone-charger/1.webp' },
+      // 数码产品 - sold_stock 为历史销量，不占用当前库存；当前可售 = total_stock
+      { name: 'MacBook Pro 笔记本', description: 'M3芯片 | 14英寸 | 18小时续航', price: 10999, original_price: 11999, total_stock: 50, sold_stock: 12, category_id: 1, image: 'https://cdn.dummyjson.com/product-images/laptops/apple-macbook-pro-14-inch-space-grey/1.webp' },
+      { name: 'Samsung Galaxy 手机', description: '高清屏幕 | 快速充电 | 拍照神器', price: 5999, original_price: 6499, total_stock: 200, sold_stock: 45, category_id: 1, image: 'https://cdn.dummyjson.com/product-images/smartphones/samsung-galaxy-s7/1.webp' },
+      { name: 'iPhone 充电器', description: '快速充电 | 原装品质 | 安全可靠', price: 199, original_price: 299, total_stock: 500, sold_stock: 120, category_id: 1, image: 'https://cdn.dummyjson.com/product-images/mobile-accessories/apple-iphone-charger/1.webp' },
       // 服装服饰
-      { name: '男士格子衬衫', description: '蓝黑格纹 | 纯棉面料 | 商务休闲', price: 159, original_price: 259, stock: 300, sales: 4560, category_id: 2, image: 'https://cdn.dummyjson.com/product-images/mens-shirts/blue-&-black-check-shirt/1.webp' },
-      { name: '男士游戏T恤', description: '电竞风格 | 舒适透气 | 潮流必备', price: 99, original_price: 149, stock: 500, sales: 6780, category_id: 2, image: 'https://cdn.dummyjson.com/product-images/mens-shirts/gigabyte-aorus-men-tshirt/1.webp' },
-      { name: '女士黑色礼服', description: '优雅气质 | 修身版型 | 晚宴首选', price: 599, original_price: 899, stock: 100, sales: 2340, category_id: 2, image: "https://cdn.dummyjson.com/product-images/womens-dresses/black-women's-gown/1.webp" },
-      { name: '女士皮裙套装', description: '时尚前卫 | 优质皮革 | 气场十足', price: 459, original_price: 699, stock: 80, sales: 1890, category_id: 2, image: 'https://cdn.dummyjson.com/product-images/womens-dresses/corset-leather-with-skirt/1.webp' },
+      { name: '男士格子衬衫', description: '蓝黑格纹 | 纯棉面料 | 商务休闲', price: 159, original_price: 259, total_stock: 300, sold_stock: 68, category_id: 2, image: 'https://cdn.dummyjson.com/product-images/mens-shirts/blue-&-black-check-shirt/1.webp' },
+      { name: '男士游戏T恤', description: '电竞风格 | 舒适透气 | 潮流必备', price: 99, original_price: 149, total_stock: 500, sold_stock: 89, category_id: 2, image: 'https://cdn.dummyjson.com/product-images/mens-shirts/gigabyte-aorus-men-tshirt/1.webp' },
+      { name: '女士黑色礼服', description: '优雅气质 | 修身版型 | 晚宴首选', price: 599, original_price: 899, total_stock: 100, sold_stock: 23, category_id: 2, image: "https://cdn.dummyjson.com/product-images/womens-dresses/black-women's-gown/1.webp" },
+      { name: '女士皮裙套装', description: '时尚前卫 | 优质皮革 | 气场十足', price: 459, original_price: 699, total_stock: 80, sold_stock: 18, category_id: 2, image: 'https://cdn.dummyjson.com/product-images/womens-dresses/corset-leather-with-skirt/1.webp' },
       // 食品饮料
-      { name: '新鲜苹果', description: '有机种植 | 脆甜多汁 | 营养健康', price: 15, original_price: 25, stock: 1000, sales: 12000, category_id: 3, image: 'https://cdn.dummyjson.com/product-images/groceries/apple/1.webp' },
-      { name: '精品牛排', description: '澳洲进口 | 雪花纹理 | 鲜嫩多汁', price: 158, original_price: 238, stock: 200, sales: 3450, category_id: 3, image: 'https://cdn.dummyjson.com/product-images/groceries/beef-steak/1.webp' },
+      { name: '新鲜苹果', description: '有机种植 | 脆甜多汁 | 营养健康', price: 15, original_price: 25, total_stock: 1000, sold_stock: 256, category_id: 3, image: 'https://cdn.dummyjson.com/product-images/groceries/apple/1.webp' },
+      { name: '精品牛排', description: '澳洲进口 | 雪花纹理 | 鲜嫩多汁', price: 158, original_price: 238, total_stock: 200, sold_stock: 42, category_id: 3, image: 'https://cdn.dummyjson.com/product-images/groceries/beef-steak/1.webp' },
       // 家居生活
-      { name: '意式双人床', description: '实木框架 | 欧式设计 | 舒适睡眠', price: 3999, original_price: 4999, stock: 30, sales: 560, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/furniture/annibale-colombo-bed/1.webp' },
-      { name: '真皮沙发', description: '头层牛皮 | 意式风格 | 客厅首选', price: 6999, original_price: 8999, stock: 20, sales: 320, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/furniture/annibale-colombo-sofa/1.webp' },
-      { name: '睫毛膏', description: '浓密纤长 | 持久不晕 | 美妆必备', price: 69, original_price: 99, stock: 500, sales: 7800, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/beauty/essence-mascara-lash-princess/1.webp' },
+      { name: '意式双人床', description: '实木框架 | 欧式设计 | 舒适睡眠', price: 3999, original_price: 4999, total_stock: 30, sold_stock: 8, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/furniture/annibale-colombo-bed/1.webp' },
+      { name: '真皮沙发', description: '头层牛皮 | 意式风格 | 客厅首选', price: 6999, original_price: 8999, total_stock: 20, sold_stock: 5, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/furniture/annibale-colombo-sofa/1.webp' },
+      { name: '睫毛膏', description: '浓密纤长 | 持久不晕 | 美妆必备', price: 69, original_price: 99, total_stock: 500, sold_stock: 134, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/beauty/essence-mascara-lash-princess/1.webp' },
     ];
-    const stmt = db.prepare('INSERT INTO products (name, description, price, original_price, stock, sales, category_id, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    products.forEach(p => stmt.run(p.name, p.description, p.price, p.original_price, p.stock, p.sales, p.category_id, p.image));
+    const stmt = db.prepare('INSERT INTO products (name, description, price, original_price, total_stock, locked_stock, sold_stock, category_id, image) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)');
+    products.forEach(p => stmt.run(p.name, p.description, p.price, p.original_price, p.total_stock, p.sold_stock, p.category_id, p.image));
     console.log('✅ 示例商品已创建');
   }
 

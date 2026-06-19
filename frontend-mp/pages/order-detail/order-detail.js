@@ -2,150 +2,182 @@ const app = getApp()
 
 Page({
   data: {
-    orders: [],
+    order: null,
     loading: true,
-    page: 1,
-    hasMore: true,
-    currentStatus: '',
-    statusTabs: [
-      { value: '', label: '全部' },
-      { value: 'pending', label: '待付款' },
-      { value: 'paid', label: '待发货' },
-      { value: 'shipped', label: '待收货' },
-      { value: 'completed', label: '已完成' }
-    ]
+    countdownTimer: null,
+    statusTextMap: {
+      pending: '待付款',
+      paid: '待发货',
+      shipped: '待收货',
+      completed: '已完成',
+      cancelled: '已取消',
+      timeout: '已超时'
+    }
   },
 
   onLoad(options) {
-    if (options.status) {
-      this.setData({ currentStatus: options.status })
+    if (options.id) {
+      this.orderId = parseInt(options.id)
+      this.loadOrderDetail()
     }
-    this.loadOrders()
+  },
+
+  onUnload() {
+    if (this.data.countdownTimer) {
+      clearInterval(this.data.countdownTimer)
+    }
+  },
+
+  onShow() {
+    if (this.orderId) {
+      this.loadOrderDetail()
+    }
   },
 
   onPullDownRefresh() {
-    this.setData({ page: 1, hasMore: true, orders: [] })
-    this.loadOrders().finally(() => {
+    this.loadOrderDetail().finally(() => {
       wx.stopPullDownRefresh()
     })
   },
 
-  onReachBottom() {
-    if (this.data.hasMore && !this.data.loading) {
-      this.loadOrders()
+  startCountdown() {
+    if (this.data.countdownTimer) {
+      clearInterval(this.data.countdownTimer)
+    }
+    const timer = setInterval(() => {
+      this.updateCountdown()
+    }, 1000)
+    this.setData({ countdownTimer: timer })
+  },
+
+  updateCountdown() {
+    const order = this.data.order
+    if (!order || order.status !== 'pending') return
+
+    if (order.pay_expire_remaining > 0) {
+      const remaining = Math.max(0, order.pay_expire_remaining - 1)
+      const mins = Math.floor(remaining / 60)
+      const secs = remaining % 60
+      this.setData({
+        'order.pay_expire_remaining': remaining,
+        'order.pay_expired': remaining <= 0,
+        'order.countdown_text': `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+      })
+
+      if (remaining <= 0) {
+        this.handleOrderExpired()
+      }
     }
   },
 
-  async loadOrders() {
-    if (this.data.loading && this.data.page > 1) return
-    
-    this.setData({ loading: true })
-    
+  async handleOrderExpired() {
     try {
-      const params = { page: this.data.page, limit: 10 }
-      if (this.data.currentStatus) {
-        params.status = this.data.currentStatus
-      }
-      
-      const res = await app.request({
-        url: '/orders',
-        data: params
+      await app.request({
+        url: `/pay/status/${this.orderId}`
       })
-      
-      this.setData({
-        orders: [...this.data.orders, ...res.list],
-        page: this.data.page + 1,
-        hasMore: res.list.length === 10
-      })
+      this.loadOrderDetail()
     } catch (err) {
-      console.error('加载订单失败', err)
+      console.error('刷新超时状态失败', err)
+    }
+  },
+
+  async loadOrderDetail() {
+    if (!this.orderId) return
+
+    this.setData({ loading: true })
+    try {
+      const order = await app.request({
+        url: `/orders/${this.orderId}`
+      })
+
+      if (order.status === 'pending') {
+        const remaining = order.pay_expire_remaining || 0
+        const mins = Math.floor(remaining / 60)
+        const secs = remaining % 60
+        order.countdown_text = remaining > 0 
+          ? `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+          : '已超时'
+        order.pay_expired = remaining <= 0
+        this.startCountdown()
+      }
+
+      this.setData({ order })
+    } catch (err) {
+      console.error('加载订单详情失败', err)
+      wx.showToast({ title: '加载失败', icon: 'none' })
     } finally {
       this.setData({ loading: false })
     }
   },
 
-  switchTab(e) {
-    const { status } = e.currentTarget.dataset
-    if (status === this.data.currentStatus) return
-    
-    this.setData({
-      currentStatus: status,
-      orders: [],
-      page: 1,
-      hasMore: true
-    })
-    this.loadOrders()
-  },
-
-  getStatusText(status) {
-    const map = {
-      pending: '待付款',
-      paid: '待发货',
-      shipped: '待收货',
-      completed: '已完成',
-      cancelled: '已取消'
-    }
-    return map[status] || status
-  },
-
-  async cancelOrder(e) {
-    const { id } = e.currentTarget.dataset
-    
+  async cancelOrder() {
     wx.showModal({
       title: '提示',
-      content: '确定取消该订单吗？',
+      content: '确定取消该订单吗？库存将立即释放',
       success: async (res) => {
         if (res.confirm) {
           try {
+            wx.showLoading({ title: '处理中...' })
             await app.request({
-              url: `/orders/${id}/cancel`,
+              url: `/orders/${this.orderId}/cancel`,
               method: 'PUT'
             })
+            wx.hideLoading()
             wx.showToast({ title: '已取消', icon: 'success' })
-            this.setData({ orders: [], page: 1, hasMore: true })
-            this.loadOrders()
+            this.loadOrderDetail()
           } catch (err) {
-            console.error('取消订单失败', err)
+            wx.hideLoading()
+            wx.showToast({ title: err.error || '取消失败', icon: 'none' })
           }
         }
       }
     })
   },
 
-  async goToPay(e) {
-    const { id } = e.currentTarget.dataset
+  async goToPay() {
     const that = this
-
     try {
       wx.showLoading({ title: '正在发起支付...' })
       
-      // 创建支付订单
       const payData = await app.request({
         url: '/pay/create',
         method: 'POST',
-        data: { order_id: id }
+        data: { order_id: this.orderId }
       })
 
       wx.hideLoading()
 
-      // 模拟支付环境
+      if (payData.already_paid) {
+        wx.showToast({ title: '订单已支付', icon: 'success' })
+        that.loadOrderDetail()
+        return
+      }
+
+      if (payData.order_status === 'timeout' || payData.order_status === 'cancelled') {
+        wx.showToast({ title: '订单已关闭，请重新下单', icon: 'none' })
+        that.loadOrderDetail()
+        return
+      }
+
       if (payData.mock) {
         wx.showModal({
           title: '模拟支付',
-          content: '当前为开发环境，点击确定模拟支付成功',
+          content: `请在 ${Math.floor(payData.pay_expire_remaining / 60)} 分钟内完成支付，点击确定模拟支付成功`,
           success: async (res) => {
             if (res.confirm) {
               try {
+                wx.showLoading({ title: '处理中...' })
                 await app.request({
                   url: '/pay/mock-success',
                   method: 'POST',
-                  data: { order_id: id }
+                  data: { order_id: that.orderId }
                 })
+                wx.hideLoading()
                 wx.showToast({ title: '支付成功', icon: 'success' })
-                that.setData({ orders: [], page: 1, hasMore: true })
-                that.loadOrders()
+                that.loadOrderDetail()
               } catch (err) {
-                console.error('模拟支付失败', err)
+                wx.hideLoading()
+                wx.showToast({ title: err.error || '支付失败', icon: 'none' })
               }
             }
           }
@@ -153,7 +185,6 @@ Page({
         return
       }
 
-      // 真实微信支付
       wx.requestPayment({
         timeStamp: payData.timeStamp,
         nonceStr: payData.nonceStr,
@@ -162,8 +193,7 @@ Page({
         paySign: payData.paySign,
         success: function() {
           wx.showToast({ title: '支付成功', icon: 'success' })
-          that.setData({ orders: [], page: 1, hasMore: true })
-          that.loadOrders()
+          that.loadOrderDetail()
         },
         fail: function(err) {
           if (err.errMsg !== 'requestPayment:fail cancel') {
@@ -175,7 +205,15 @@ Page({
     } catch (err) {
       wx.hideLoading()
       console.error('发起支付失败', err)
-      wx.showToast({ title: '发起支付失败', icon: 'none' })
+      wx.showToast({ title: err.error || '发起支付失败', icon: 'none' })
     }
+  },
+
+  goBack() {
+    wx.navigateBack()
+  },
+
+  goToHome() {
+    wx.switchTab({ url: '/pages/index/index' })
   }
 })
