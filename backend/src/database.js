@@ -41,15 +41,29 @@ function initDatabase() {
       price REAL NOT NULL,
       original_price REAL,
       stock INTEGER DEFAULT 0,
+      reserved_stock INTEGER DEFAULT 0,
       sales INTEGER DEFAULT 0,
       category_id INTEGER,
       image TEXT DEFAULT '',
       images TEXT DEFAULT '[]',
       status INTEGER DEFAULT 1,
+      version INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (category_id) REFERENCES categories(id)
     )
   `);
+
+  // 迁移已有商品数据：添加reserved_stock字段（如果表已存在但没有该字段）
+  const columns = db.prepare("PRAGMA table_info(products)").all();
+  const columnNames = columns.map(c => c.name);
+  if (!columnNames.includes('reserved_stock')) {
+    db.exec('ALTER TABLE products ADD COLUMN reserved_stock INTEGER DEFAULT 0');
+    console.log('✅ 已添加 reserved_stock 字段到 products 表');
+  }
+  if (!columnNames.includes('version')) {
+    db.exec('ALTER TABLE products ADD COLUMN version INTEGER DEFAULT 0');
+    console.log('✅ 已添加 version 字段到 products 表');
+  }
 
   // 创建订单表
   db.exec(`
@@ -63,10 +77,44 @@ function initDatabase() {
       receiver_name TEXT DEFAULT '',
       receiver_phone TEXT DEFAULT '',
       remark TEXT DEFAULT '',
+      idempotent_key TEXT UNIQUE,
+      pay_expire_time DATETIME,
+      paid_at DATETIME,
+      cancelled_at DATETIME,
+      stock_locked INTEGER DEFAULT 0,
+      stock_processed INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
+
+  // 迁移已有订单表添加新字段
+  const orderColumns = db.prepare("PRAGMA table_info(orders)").all();
+  const orderColumnNames = orderColumns.map(c => c.name);
+  if (!orderColumnNames.includes('pay_expire_time')) {
+    db.exec('ALTER TABLE orders ADD COLUMN pay_expire_time DATETIME');
+    console.log('✅ 已添加 pay_expire_time 字段到 orders 表');
+  }
+  if (!orderColumnNames.includes('paid_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN paid_at DATETIME');
+    console.log('✅ 已添加 paid_at 字段到 orders 表');
+  }
+  if (!orderColumnNames.includes('cancelled_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN cancelled_at DATETIME');
+    console.log('✅ 已添加 cancelled_at 字段到 orders 表');
+  }
+  if (!orderColumnNames.includes('stock_locked')) {
+    db.exec('ALTER TABLE orders ADD COLUMN stock_locked INTEGER DEFAULT 0');
+    console.log('✅ 已添加 stock_locked 字段到 orders 表');
+  }
+  if (!orderColumnNames.includes('stock_processed')) {
+    db.exec('ALTER TABLE orders ADD COLUMN stock_processed INTEGER DEFAULT 0');
+    console.log('✅ 已添加 stock_processed 字段到 orders 表');
+  }
+  if (!orderColumnNames.includes('idempotent_key')) {
+    db.exec('ALTER TABLE orders ADD COLUMN idempotent_key TEXT');
+    console.log('✅ 已添加 idempotent_key 字段到 orders 表');
+  }
 
   // 创建订单项表
   db.exec(`
@@ -110,6 +158,54 @@ function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
+  `);
+
+  // 创建库存流水表 - 用于追踪所有库存变更，保证幂等性和可审计
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER,
+      order_no TEXT,
+      product_id INTEGER NOT NULL,
+      product_name TEXT,
+      quantity INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      idempotent_key TEXT UNIQUE,
+      remark TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+  `);
+
+  // 创建支付记录表 - 保证支付回调幂等性
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS payment_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      order_no TEXT NOT NULL,
+      transaction_id TEXT,
+      amount REAL NOT NULL,
+      status TEXT DEFAULT 'success',
+      idempotent_key TEXT UNIQUE,
+      paid_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      raw_data TEXT,
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+    )
+  `);
+
+  // 创建索引
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_orders_status_expire ON orders(status, pay_expire_time);
+    CREATE INDEX IF NOT EXISTS idx_stock_logs_order ON stock_logs(order_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_logs_product ON stock_logs(product_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_records_order ON payment_records(order_id);
+  `);
+
+  // 创建幂等性唯一索引（SQLite兼容方式：ALTER TABLE ADD COLUMN不支持UNIQUE，需单独建索引）
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotent_key ON orders(idempotent_key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_logs_idempotent_key ON stock_logs(idempotent_key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_records_idempotent_key ON payment_records(idempotent_key);
   `);
 
   // 插入默认管理员账号

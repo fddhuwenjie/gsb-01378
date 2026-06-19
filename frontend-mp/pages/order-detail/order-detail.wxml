@@ -1,5 +1,4 @@
 <view class="page">
-  <!-- 状态标签页 -->
   <view class="status-tabs">
     <view 
       class="tab-item {{currentStatus === item.value ? 'active' : ''}}" 
@@ -12,18 +11,33 @@
     </view>
   </view>
 
-  <!-- 订单列表 -->
   <view class="order-list">
-    <view class="order-card" wx:for="{{orders}}" wx:key="id">
+    <view class="order-card" wx:for="{{orders}}" wx:key="id" bindtap="goToOrderDetail" data-id="{{item.id}}">
       <view class="order-header">
         <text class="order-no">订单号：{{item.order_no}}</text>
         <text class="order-status status-{{item.status}}">
-          {{item.status === 'pending' ? '待付款' : item.status === 'paid' ? '待发货' : item.status === 'shipped' ? '待收货' : item.status === 'completed' ? '已完成' : '已取消'}}
+          {{item.statusText}}
         </text>
+      </view>
+
+      <view class="countdown-bar" wx:if="{{item.status === 'pending' && countdowns[item.id] > 0}}">
+        <text class="countdown-icon">⏰</text>
+        <text class="countdown-text">剩余支付时间：</text>
+        <text class="countdown-time {{countdowns[item.id] < 300 ? 'urgent' : ''}}">{{countdowns[item.id] >= 60 ? (Math.floor(countdowns[item.id]/60) + '分' + (countdowns[item.id]%60) + '秒') : countdowns[item.id] + '秒'}}</text>
+      </view>
+
+      <view class="timeout-bar" wx:if="{{item.status === 'pending' && item.is_expired}}">
+        <text class="timeout-icon">⚠️</text>
+        <text class="timeout-text">订单即将超时关闭</text>
+      </view>
+
+      <view class="timeout-bar" wx:if="{{item.status === 'timeout'}}">
+        <text class="timeout-icon">⌛</text>
+        <text class="timeout-text">订单已超时关闭，库存已释放</text>
       </view>
       
       <view class="order-items">
-        <view class="order-item" wx:for="{{item.items}}" wx:for-item="product" wx:key="id">
+        <view class="order-item" wx:for="{{item.items}}" wx:for-item="product" wx:key="id" catchtap="">
           <image class="item-image" src="{{product.product_image}}" mode="aspectFill" />
           <view class="item-info">
             <text class="item-name">{{product.product_name}}</text>
@@ -40,15 +54,17 @@
           <text>共 {{item.items.length}} 件商品，合计：</text>
           <text class="total-price">¥{{item.total_amount}}</text>
         </view>
-        <view class="order-actions" wx:if="{{item.status === 'pending'}}">
-          <view class="action-btn outline" bindtap="cancelOrder" data-id="{{item.id}}">取消订单</view>
-          <view class="action-btn primary" bindtap="goToPay" data-id="{{item.id}}">去支付</view>
+        <view class="order-actions" wx:if="{{item.status === 'pending' && !item.is_expired}}">
+          <view class="action-btn outline" catchtap="cancelOrder" data-id="{{item.id}}">取消订单</view>
+          <view class="action-btn primary" catchtap="goToPay" data-id="{{item.id}}">去支付</view>
+        </view>
+        <view class="order-actions" wx:elif="{{item.status === 'timeout' || item.status === 'cancelled'}}">
+          <view class="action-btn outline" catchtap="">已关闭</view>
         </view>
       </view>
     </view>
   </view>
 
-  <!-- 加载状态 -->
   <view class="loading-more" wx:if="{{loading}}">
     <text>加载中...</text>
   </view>
@@ -56,7 +72,6 @@
     <text>没有更多了</text>
   </view>
   
-  <!-- 空状态 -->
   <view class="empty" wx:if="{{!loading && orders.length === 0}}">
     <text class="empty-icon">📋</text>
     <text class="empty-text">暂无订单</text>

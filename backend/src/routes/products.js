@@ -4,7 +4,21 @@ const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// 获取商品列表（公开）
+function formatProductWithStock(product) {
+  if (!product) return product;
+  const total_stock = product.stock || 0;
+  const reserved_stock = product.reserved_stock || 0;
+  const sold_stock = product.sales || 0;
+  return {
+    ...product,
+    total_stock,
+    reserved_stock,
+    sold_stock,
+    available_stock: total_stock - reserved_stock,
+    stock: total_stock - reserved_stock
+  };
+}
+
 router.get('/', (req, res) => {
   const { category_id, keyword, page = 1, limit = 10 } = req.query;
   const offset = (page - 1) * limit;
@@ -22,7 +36,6 @@ router.get('/', (req, res) => {
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
 
-  // 获取总数
   const countSql = sql.replace('SELECT p.*, c.name as category_name', 'SELECT COUNT(*) as total');
   const { total } = db.prepare(countSql).get(...params);
 
@@ -30,9 +43,10 @@ router.get('/', (req, res) => {
   params.push(parseInt(limit), parseInt(offset));
 
   const products = db.prepare(sql).all(...params);
+  const formattedProducts = products.map(formatProductWithStock);
 
   res.json({
-    list: products,
+    list: formattedProducts,
     total,
     page: parseInt(page),
     limit: parseInt(limit),
@@ -40,7 +54,6 @@ router.get('/', (req, res) => {
   });
 });
 
-// 获取商品详情（公开）
 router.get('/:id', (req, res) => {
   const { id } = req.params;
   const product = db.prepare(`
@@ -54,10 +67,9 @@ router.get('/:id', (req, res) => {
     return res.status(404).json({ error: '商品不存在' });
   }
 
-  res.json(product);
+  res.json(formatProductWithStock(product));
 });
 
-// 创建商品（管理员）
 router.post('/', authMiddleware, adminMiddleware, (req, res) => {
   const { name, description, price, original_price, stock, category_id, image, images, status } = req.body;
 
@@ -66,19 +78,18 @@ router.post('/', authMiddleware, adminMiddleware, (req, res) => {
   }
 
   const result = db.prepare(`
-    INSERT INTO products (name, description, price, original_price, stock, category_id, image, images, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO products (name, description, price, original_price, stock, reserved_stock, sales, category_id, image, images, status)
+    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
   `).run(name, description || '', price, original_price || price, stock || 0, category_id || null, image || '', JSON.stringify(images || []), status ?? 1);
 
   res.json({ message: '创建成功', id: result.lastInsertRowid });
 });
 
-// 更新商品（管理员）
 router.put('/:id', authMiddleware, adminMiddleware, (req, res) => {
   const { id } = req.params;
   const { name, description, price, original_price, stock, category_id, image, images, status } = req.body;
 
-  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
   if (!product) {
     return res.status(404).json({ error: '商品不存在' });
   }
@@ -100,7 +111,6 @@ router.put('/:id', authMiddleware, adminMiddleware, (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-// 删除商品（管理员）
 router.delete('/:id', authMiddleware, adminMiddleware, (req, res) => {
   const { id } = req.params;
 
@@ -114,7 +124,6 @@ router.delete('/:id', authMiddleware, adminMiddleware, (req, res) => {
   res.json({ message: '删除成功' });
 });
 
-// 获取所有商品（管理员，包括下架）
 router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
   const { page = 1, limit = 10 } = req.query;
   const offset = (page - 1) * limit;
@@ -128,12 +137,57 @@ router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
     LIMIT ? OFFSET ?
   `).all(parseInt(limit), parseInt(offset));
 
+  const formattedProducts = products.map(formatProductWithStock);
+
   res.json({
-    list: products,
+    list: formattedProducts,
     total,
     page: parseInt(page),
     limit: parseInt(limit),
     totalPages: Math.ceil(total / limit)
+  });
+});
+
+router.get('/admin/stock-summary', authMiddleware, adminMiddleware, (req, res) => {
+  const summary = db.prepare(`
+    SELECT 
+      COUNT(*) as total_products,
+      SUM(stock) as total_stock,
+      SUM(reserved_stock) as total_reserved,
+      SUM(sales) as total_sold,
+      SUM(stock - reserved_stock) as total_available
+    FROM products
+  `).get();
+
+  const recentLogs = db.prepare(`
+    SELECT sl.*, o.order_no 
+    FROM stock_logs sl
+    LEFT JOIN orders o ON sl.order_id = o.id
+    ORDER BY sl.created_at DESC
+    LIMIT 50
+  `).all();
+
+  const typeMap = {
+    reserve: { text: '预占', color: 'orange' },
+    confirm: { text: '确认扣减', color: 'green' },
+    release: { text: '释放', color: 'blue' },
+    admin_adjust: { text: '管理员调整', color: 'purple' }
+  };
+
+  const logsWithType = recentLogs.map(log => ({
+    ...log,
+    type_info: typeMap[log.type] || { text: log.type, color: 'default' }
+  }));
+
+  res.json({
+    summary: {
+      total_products: summary.total_products || 0,
+      total_stock: summary.total_stock || 0,
+      total_reserved: summary.total_reserved || 0,
+      total_sold: summary.total_sold || 0,
+      total_available: summary.total_available || 0
+    },
+    recent_logs: logsWithType
   });
 });
 
