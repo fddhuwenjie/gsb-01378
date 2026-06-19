@@ -46,6 +46,11 @@ app.use((req, res, next) => {
 initDatabase();
 logger.info('数据库初始化完成');
 
+// 启动订单超时回收任务（reaper）
+// 关键链路：未支付订单到期后自动从 pending 推进到 closed，并把预占库存还给可售库存。
+const orderReaper = require('./services/orderReaper');
+orderReaper.start();
+
 // API 路由
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);

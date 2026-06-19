@@ -80,6 +80,16 @@ Page({
 
     this.setData({ submitting: true })
 
+    // 幂等键：每个"提交动作"生成一个稳定的 key。
+    //   - 连续点击/网络抖动重试时，后端会识别同一个 key 直接返回上次创建的订单，
+    //     不会重复扣库存/重复占用预占库存。
+    //   - 用户按返回键再进来重新填写、再提交，会产生新的 key（新订单）。
+    if (!this._idempotencyKey) {
+      this._idempotencyKey =
+        'mp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10)
+    }
+    const idempotencyKey = this._idempotencyKey
+
     try {
       const orderItems = items.map(item => ({
         product_id: item.product_id,
@@ -94,12 +104,13 @@ Page({
           address: selectedAddress.region + ' ' + selectedAddress.detail,
           receiver_name: selectedAddress.name,
           receiver_phone: selectedAddress.phone,
-          remark
+          remark,
+          idempotency_key: idempotencyKey
         }
       })
 
       wx.showToast({
-        title: '下单成功',
+        title: res.idempotent ? '订单已存在' : '下单成功',
         icon: 'success'
       })
 
@@ -110,6 +121,8 @@ Page({
       }, 1500)
     } catch (err) {
       console.error('提交订单失败', err)
+      // 失败时清掉幂等键，让用户下次提交是新的请求
+      this._idempotencyKey = null
     } finally {
       this.setData({ submitting: false })
     }

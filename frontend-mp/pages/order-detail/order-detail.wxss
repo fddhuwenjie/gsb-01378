@@ -77,6 +77,41 @@
 .status-paid, .status-shipped { color: #1890ff; }
 .status-completed { color: #52c41a; }
 .status-cancelled { color: #969799; }
+.status-closed { color: #969799; }
+
+/* ==================== 倒计时 ==================== */
+.countdown-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 28rpx;
+  background-color: #fff7e6;
+  border-bottom: 1rpx solid #ffe7ba;
+}
+
+.countdown-label {
+  font-size: 24rpx;
+  color: #d46b08;
+}
+
+.countdown-value {
+  font-size: 28rpx;
+  color: #ff4d4f;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.countdown-expired {
+  font-size: 26rpx;
+  color: #ff4d4f;
+  font-weight: 500;
+}
+
+.action-btn.primary.disabled {
+  background: #d9d9d9;
+  box-shadow: none;
+  color: #fff;
+}
 
 /* ==================== 订单商品 ==================== */
 .order-items {

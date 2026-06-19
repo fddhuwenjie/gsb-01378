@@ -14,8 +14,16 @@ import {
   Image,
   Tag,
 } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined } from '@ant-design/icons'
 import request from '../utils/request'
+import dayjs from 'dayjs'
+
+const stockActionMap = {
+  reserve: { text: '下单预占', color: 'orange' },
+  commit: { text: '支付提交', color: 'blue' },
+  release: { text: '取消释放', color: 'default' },
+  expire: { text: '超时回收', color: 'red' },
+}
 
 export default function Products() {
   const [products, setProducts] = useState([])
@@ -25,6 +33,26 @@ export default function Products() {
   const [editingId, setEditingId] = useState(null)
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 })
   const [form] = Form.useForm()
+  const [stockLogOpen, setStockLogOpen] = useState(false)
+  const [stockLogProduct, setStockLogProduct] = useState(null)
+  const [stockLogs, setStockLogs] = useState([])
+  const [stockLogLoading, setStockLogLoading] = useState(false)
+
+  const showStockLogs = async (product) => {
+    setStockLogProduct(product)
+    setStockLogOpen(true)
+    setStockLogLoading(true)
+    try {
+      const res = await request.get('/orders/admin/stock-logs', {
+        params: { product_id: product.id, limit: 50 },
+      })
+      setStockLogs(res.list || [])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setStockLogLoading(false)
+    }
+  }
 
   useEffect(() => {
     fetchProducts()
@@ -134,10 +162,25 @@ export default function Products() {
       render: (price) => `¥${price.toFixed(2)}`,
     },
     {
-      title: '库存',
+      title: '可售库存',
       dataIndex: 'stock',
       key: 'stock',
-      width: 80,
+      width: 90,
+      render: (v) => <Tag color={v > 0 ? 'green' : 'red'}>{v}</Tag>,
+    },
+    {
+      title: '预占库存',
+      dataIndex: 'stock_reserved',
+      key: 'stock_reserved',
+      width: 90,
+      render: (v) => <Tag color={v > 0 ? 'orange' : 'default'}>{v || 0}</Tag>,
+    },
+    {
+      title: '已售库存',
+      dataIndex: 'stock_sold',
+      key: 'stock_sold',
+      width: 90,
+      render: (v) => <Tag color={v > 0 ? 'blue' : 'default'}>{v || 0}</Tag>,
     },
     {
       title: '分类',
@@ -159,7 +202,7 @@ export default function Products() {
     {
       title: '操作',
       key: 'action',
-      width: 150,
+      width: 220,
       render: (_, record) => (
         <Space>
           <Button
@@ -169,6 +212,14 @@ export default function Products() {
             onClick={() => handleEdit(record)}
           >
             编辑
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<HistoryOutlined />}
+            onClick={() => showStockLogs(record)}
+          >
+            流水
           </Button>
           <Popconfirm
             title="确定删除该商品吗？"
@@ -274,6 +325,60 @@ export default function Products() {
             <Switch checkedChildren="上架" unCheckedChildren="下架" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={stockLogProduct ? `库存流水 - ${stockLogProduct.name}` : '库存流水'}
+        open={stockLogOpen}
+        onCancel={() => setStockLogOpen(false)}
+        footer={null}
+        width={760}
+      >
+        {stockLogProduct && (
+          <div style={{ marginBottom: 12 }}>
+            <Tag color="green">可售 {stockLogProduct.stock}</Tag>
+            <Tag color="orange">预占 {stockLogProduct.stock_reserved || 0}</Tag>
+            <Tag color="blue">已售 {stockLogProduct.stock_sold || 0}</Tag>
+          </div>
+        )}
+        <Table
+          dataSource={stockLogs}
+          loading={stockLogLoading}
+          rowKey="id"
+          size="small"
+          pagination={false}
+          columns={[
+            {
+              title: '时间',
+              dataIndex: 'created_at',
+              width: 160,
+              render: (t) => dayjs(t).format('YYYY-MM-DD HH:mm:ss'),
+            },
+            {
+              title: '订单号',
+              dataIndex: 'order_no',
+              width: 180,
+            },
+            {
+              title: '动作',
+              dataIndex: 'action',
+              width: 110,
+              render: (a) => {
+                const m = stockActionMap[a] || { text: a, color: 'default' }
+                return <Tag color={m.color}>{m.text}</Tag>
+              },
+            },
+            {
+              title: '数量',
+              dataIndex: 'quantity',
+              width: 80,
+            },
+            {
+              title: '备注',
+              dataIndex: 'remark',
+            },
+          ]}
+        />
       </Modal>
     </div>
   )

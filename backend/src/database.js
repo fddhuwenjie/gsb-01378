@@ -33,6 +33,11 @@ function initDatabase() {
   `);
 
   // 创建商品表
+  // 库存模型说明：
+  //   stock          —— 可售库存（available）。用户下单时从这里扣减。
+  //   stock_reserved —— 预占库存（reserved）。下单成功但未支付的部分。
+  //   stock_sold     —— 已售库存（sold）。支付成功后从 reserved 转入 sold。
+  // 不变量：可售库存 + 预占库存 + 已售库存 = 商品总库存（恒等且非负）
   db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +46,8 @@ function initDatabase() {
       price REAL NOT NULL,
       original_price REAL,
       stock INTEGER DEFAULT 0,
+      stock_reserved INTEGER DEFAULT 0,
+      stock_sold INTEGER DEFAULT 0,
       sales INTEGER DEFAULT 0,
       category_id INTEGER,
       image TEXT DEFAULT '',
@@ -51,7 +58,25 @@ function initDatabase() {
     )
   `);
 
+  // 历史库兼容：为已存在的 products 表补齐 stock_reserved / stock_sold 列
+  const productCols = db.prepare("PRAGMA table_info(products)").all().map(c => c.name);
+  if (!productCols.includes('stock_reserved')) {
+    db.exec('ALTER TABLE products ADD COLUMN stock_reserved INTEGER DEFAULT 0');
+  }
+  if (!productCols.includes('stock_sold')) {
+    db.exec('ALTER TABLE products ADD COLUMN stock_sold INTEGER DEFAULT 0');
+  }
+
   // 创建订单表
+  // 状态机（含库存联动）：
+  //   pending  -> paid       支付成功：reserved 转 sold
+  //   pending  -> cancelled  用户取消：reserved 回到 available
+  //   pending  -> closed     超时关闭：reserved 回到 available（reaper 触发）
+  //   paid     -> shipped    管理员发货
+  //   shipped  -> completed  完成
+  // expire_at         订单支付截止时间（超时未支付将被 reaper 自动关闭并回收预占）
+  // paid_at/closed_at 记录状态推进的实际时间，方便审计与排障
+  // idempotency_key   下单幂等键，防止用户多次点击造成重复扣库存
   db.exec(`
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,10 +88,33 @@ function initDatabase() {
       receiver_name TEXT DEFAULT '',
       receiver_phone TEXT DEFAULT '',
       remark TEXT DEFAULT '',
+      expire_at DATETIME,
+      paid_at DATETIME,
+      closed_at DATETIME,
+      idempotency_key TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
+
+  // 历史库兼容：为已存在的 orders 表补齐新字段
+  const orderCols = db.prepare("PRAGMA table_info(orders)").all().map(c => c.name);
+  if (!orderCols.includes('expire_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN expire_at DATETIME');
+  }
+  if (!orderCols.includes('paid_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN paid_at DATETIME');
+  }
+  if (!orderCols.includes('closed_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN closed_at DATETIME');
+  }
+  if (!orderCols.includes('idempotency_key')) {
+    db.exec('ALTER TABLE orders ADD COLUMN idempotency_key TEXT');
+  }
+  // 幂等键索引：同一用户的 idempotency_key 唯一
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idem ON orders(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL');
+  // expire_at 上的扫描索引，加速 reaper
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_expire ON orders(status, expire_at)');
 
   // 创建订单项表
   db.exec(`
@@ -111,6 +159,32 @@ function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
+
+  // 创建库存流水表
+  // 每一次库存状态迁移都落一条流水，便于：
+  //   1) 排查超卖/重复扣减/重复回滚
+  //   2) 后台审计可售/预占/已售的变化轨迹
+  // action 取值：
+  //   reserve   下单预占（available -1，reserved +1）
+  //   commit    支付成功（reserved -1，sold +1）
+  //   release   取消订单（reserved -1，available +1）
+  //   expire    超时回收（reserved -1，available +1）
+  // 通过 (order_id, product_id, action) 唯一索引，保证同一订单同一动作只会写入一次，
+  // 即便事务因竞态被多次触发，库存数字也不会被重复加减。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER,
+      order_no TEXT,
+      product_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      remark TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_logs_uniq ON stock_logs(order_id, product_id, action)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stock_logs_product ON stock_logs(product_id, created_at)');
 
   // 插入默认管理员账号
   const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');

@@ -59,6 +59,7 @@ export default function Dashboard() {
     shipped: { text: '已发货', color: 'cyan' },
     completed: { text: '已完成', color: 'green' },
     cancelled: { text: '已取消', color: 'red' },
+    closed: { text: '超时关闭', color: 'default' },
   }
 
   const columns = [

@@ -18,8 +18,19 @@
       <view class="order-header">
         <text class="order-no">订单号：{{item.order_no}}</text>
         <text class="order-status status-{{item.status}}">
-          {{item.status === 'pending' ? '待付款' : item.status === 'paid' ? '待发货' : item.status === 'shipped' ? '待收货' : item.status === 'completed' ? '已完成' : '已取消'}}
+          {{item.status === 'pending' ? '待付款' : item.status === 'paid' ? '待发货' : item.status === 'shipped' ? '待收货' : item.status === 'completed' ? '已完成' : item.status === 'closed' ? '超时关闭' : '已取消'}}
         </text>
+      </view>
+
+      <!-- 待付款订单的支付倒计时；过期后展示明确提示，告知库存已释放 -->
+      <view class="countdown-bar" wx:if="{{item.status === 'pending'}}">
+        <block wx:if="{{item.pay_expired}}">
+          <text class="countdown-expired">⏰ 已过期，库存已释放，请重新下单</text>
+        </block>
+        <block wx:else>
+          <text class="countdown-label">剩余支付时间</text>
+          <text class="countdown-value">{{item.remaining_text}}</text>
+        </block>
       </view>
       
       <view class="order-items">
@@ -42,7 +53,9 @@
         </view>
         <view class="order-actions" wx:if="{{item.status === 'pending'}}">
           <view class="action-btn outline" bindtap="cancelOrder" data-id="{{item.id}}">取消订单</view>
-          <view class="action-btn primary" bindtap="goToPay" data-id="{{item.id}}">去支付</view>
+          <view class="action-btn primary {{item.pay_expired ? 'disabled' : ''}}" bindtap="goToPay" data-id="{{item.id}}">
+            {{item.pay_expired ? '已过期' : '去支付'}}
+          </view>
         </view>
       </view>
     </view>

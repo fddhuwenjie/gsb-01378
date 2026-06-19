@@ -20,14 +20,23 @@ const statusMap = {
   shipped: { text: '已发货', color: 'cyan' },
   completed: { text: '已完成', color: 'green' },
   cancelled: { text: '已取消', color: 'red' },
+  closed: { text: '超时关闭', color: 'default' },
 }
 
+// 管理员可手动推进的目标状态。pending->paid 必须由支付链路推进，这里不允许直接选择。
 const statusOptions = [
+  { value: 'shipped', label: '已发货' },
+  { value: 'completed', label: '已完成' },
+  { value: 'cancelled', label: '已取消' },
+]
+
+const filterStatusOptions = [
   { value: 'pending', label: '待付款' },
   { value: 'paid', label: '已付款' },
   { value: 'shipped', label: '已发货' },
   { value: 'completed', label: '已完成' },
   { value: 'cancelled', label: '已取消' },
+  { value: 'closed', label: '超时关闭' },
 ]
 
 export default function Orders() {
@@ -105,16 +114,22 @@ export default function Orders() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 120,
-      render: (status, record) => (
-        <Select
-          value={status}
-          size="small"
-          style={{ width: 100 }}
-          onChange={(value) => handleStatusChange(record.id, value)}
-          options={statusOptions}
-        />
-      ),
+      width: 140,
+      render: (status, record) => {
+        // pending / paid 之前的状态用 Tag 展示，之后管理员可以用 Select 推进
+        if (status === 'pending' || status === 'cancelled' || status === 'closed') {
+          return <Tag color={statusMap[status]?.color}>{statusMap[status]?.text}</Tag>
+        }
+        return (
+          <Select
+            value={status}
+            size="small"
+            style={{ width: 110 }}
+            onChange={(value) => handleStatusChange(record.id, value)}
+            options={statusOptions}
+          />
+        )
+      },
     },
     {
       title: '下单时间',
@@ -122,6 +137,18 @@ export default function Orders() {
       key: 'created_at',
       width: 160,
       render: (time) => dayjs(time).format('YYYY-MM-DD HH:mm'),
+    },
+    {
+      title: '支付截止',
+      key: 'expire',
+      width: 140,
+      render: (_, r) => {
+        if (r.status !== 'pending') return <span style={{ color: '#999' }}>-</span>
+        if (r.pay_expired) return <Tag color="red">已过期(待回收)</Tag>
+        const min = Math.floor((r.remaining_ms || 0) / 60000)
+        const sec = Math.floor(((r.remaining_ms || 0) % 60000) / 1000)
+        return <Tag color="orange">{min}分{sec}秒</Tag>
+      },
     },
     {
       title: '操作',
@@ -147,10 +174,10 @@ export default function Orders() {
           <span>状态筛选：</span>
           <Select
             value={filterStatus}
-            style={{ width: 120 }}
+            style={{ width: 140 }}
             allowClear
             placeholder="全部状态"
-            options={statusOptions}
+            options={filterStatusOptions}
             onChange={(value) => {
               setFilterStatus(value)
               setPagination((prev) => ({ ...prev, current: 1 }))
