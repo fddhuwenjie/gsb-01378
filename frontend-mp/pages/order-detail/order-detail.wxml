@@ -18,8 +18,18 @@
       <view class="order-header">
         <text class="order-no">订单号：{{item.order_no}}</text>
         <text class="order-status status-{{item.status}}">
-          {{item.status === 'pending' ? '待付款' : item.status === 'paid' ? '待发货' : item.status === 'shipped' ? '待收货' : item.status === 'completed' ? '已完成' : '已取消'}}
+          {{item.status === 'pending' ? '待付款' : item.status === 'paid' ? '待发货' : item.status === 'shipped' ? '待收货' : item.status === 'completed' ? '已完成' : item.status === 'timeout' ? '已超时' : '已取消'}}
         </text>
+      </view>
+
+      <view class="countdown-bar" wx:if="{{item.status === 'pending'}}">
+        <view wx:if="{{item.is_expired}}" class="countdown-expired">
+          <text>订单已过期</text>
+        </view>
+        <view wx:else class="countdown-active">
+          <text class="countdown-label">剩余支付时间：</text>
+          <text class="countdown-time">{{item.countdown_text}}</text>
+        </view>
       </view>
       
       <view class="order-items">
@@ -40,9 +50,12 @@
           <text>共 {{item.items.length}} 件商品，合计：</text>
           <text class="total-price">¥{{item.total_amount}}</text>
         </view>
-        <view class="order-actions" wx:if="{{item.status === 'pending'}}">
+        <view class="order-actions" wx:if="{{item.status === 'pending' && !item.is_expired}}">
           <view class="action-btn outline" bindtap="cancelOrder" data-id="{{item.id}}">取消订单</view>
           <view class="action-btn primary" bindtap="goToPay" data-id="{{item.id}}">去支付</view>
+        </view>
+        <view class="order-actions" wx:if="{{item.status === 'pending' && item.is_expired}}">
+          <view class="action-btn outline disabled">订单已关闭</view>
         </view>
       </view>
     </view>

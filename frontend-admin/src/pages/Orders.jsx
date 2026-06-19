@@ -20,6 +20,7 @@ const statusMap = {
   shipped: { text: '已发货', color: 'cyan' },
   completed: { text: '已完成', color: 'green' },
   cancelled: { text: '已取消', color: 'red' },
+  timeout: { text: '已超时', color: 'default' },
 }
 
 const statusOptions = [
@@ -28,6 +29,7 @@ const statusOptions = [
   { value: 'shipped', label: '已发货' },
   { value: 'completed', label: '已完成' },
   { value: 'cancelled', label: '已取消' },
+  { value: 'timeout', label: '已超时' },
 ]
 
 export default function Orders() {

@@ -13,8 +13,12 @@ import {
   Popconfirm,
   Image,
   Tag,
+  Card,
+  Row,
+  Col,
+  Statistic,
 } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, ShoppingOutlined, ClockCircleOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import request from '../utils/request'
 
 export default function Products() {
@@ -24,11 +28,13 @@ export default function Products() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 })
+  const [stockStats, setStockStats] = useState({ total_available: 0, total_reserved: 0, total_sold: 0 })
   const [form] = Form.useForm()
 
   useEffect(() => {
     fetchProducts()
     fetchCategories()
+    fetchStockStats()
   }, [pagination.current])
 
   const fetchProducts = async () => {
@@ -43,6 +49,15 @@ export default function Products() {
       console.error(error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchStockStats = async () => {
+    try {
+      const res = await request.get('/products/admin/stats/summary')
+      setStockStats(res)
+    } catch (error) {
+      console.error(error)
     }
   }
 
@@ -134,10 +149,25 @@ export default function Products() {
       render: (price) => `¥${price.toFixed(2)}`,
     },
     {
-      title: '库存',
-      dataIndex: 'stock',
-      key: 'stock',
-      width: 80,
+      title: '可售库存',
+      dataIndex: 'available_stock',
+      key: 'available_stock',
+      width: 100,
+      render: (num) => <Tag color="green">{num}</Tag>,
+    },
+    {
+      title: '预占库存',
+      dataIndex: 'reserved_stock',
+      key: 'reserved_stock',
+      width: 100,
+      render: (num) => <Tag color="orange">{num}</Tag>,
+    },
+    {
+      title: '已售库存',
+      dataIndex: 'sold_stock',
+      key: 'sold_stock',
+      width: 100,
+      render: (num) => <Tag color="blue">{num}</Tag>,
     },
     {
       title: '分类',
@@ -187,6 +217,39 @@ export default function Products() {
 
   return (
     <div>
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={8}>
+          <Card>
+            <Statistic
+              title="可售库存"
+              value={stockStats.total_available}
+              prefix={<ShoppingOutlined style={{ color: '#52c41a' }} />}
+              valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic
+              title="预占库存"
+              value={stockStats.total_reserved}
+              prefix={<ClockCircleOutlined style={{ color: '#faad14' }} />}
+              valueStyle={{ color: '#faad14' }}
+            />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic
+              title="已售库存"
+              value={stockStats.total_sold}
+              prefix={<CheckCircleOutlined style={{ color: '#1890ff' }} />}
+              valueStyle={{ color: '#1890ff' }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
       <div className="table-operations">
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
           添加商品

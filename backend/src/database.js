@@ -5,8 +5,12 @@ const bcrypt = require('bcryptjs');
 const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/shop.db');
 const db = new Database(dbPath);
 
+const ORDER_TIMEOUT_MINUTES = parseInt(process.env.ORDER_TIMEOUT_MINUTES || '30', 10);
+
 function initDatabase() {
-  // 创建用户表
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +25,6 @@ function initDatabase() {
     )
   `);
 
-  // 创建分类表
   db.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,7 +35,6 @@ function initDatabase() {
     )
   `);
 
-  // 创建商品表
   db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,33 +42,125 @@ function initDatabase() {
       description TEXT DEFAULT '',
       price REAL NOT NULL,
       original_price REAL,
-      stock INTEGER DEFAULT 0,
-      sales INTEGER DEFAULT 0,
+      available_stock INTEGER DEFAULT 0,
+      reserved_stock INTEGER DEFAULT 0,
+      sold_stock INTEGER DEFAULT 0,
       category_id INTEGER,
       image TEXT DEFAULT '',
       images TEXT DEFAULT '[]',
       status INTEGER DEFAULT 1,
+      version INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (category_id) REFERENCES categories(id)
     )
   `);
 
-  // 创建订单表
+  const productsColumns = db.prepare("PRAGMA table_info(products)").all();
+  const columnNames = productsColumns.map(c => c.name);
+  
+  if (!columnNames.includes('available_stock')) {
+    db.exec('ALTER TABLE products ADD COLUMN available_stock INTEGER DEFAULT 0');
+  }
+  if (!columnNames.includes('reserved_stock')) {
+    db.exec('ALTER TABLE products ADD COLUMN reserved_stock INTEGER DEFAULT 0');
+  }
+  if (!columnNames.includes('sold_stock')) {
+    db.exec('ALTER TABLE products ADD COLUMN sold_stock INTEGER DEFAULT 0');
+  }
+  if (!columnNames.includes('version')) {
+    db.exec('ALTER TABLE products ADD COLUMN version INTEGER DEFAULT 0');
+  }
+  if (columnNames.includes('stock') && !columnNames.includes('stock_migrated')) {
+    db.exec('UPDATE products SET available_stock = stock WHERE available_stock = 0');
+  }
+  if (columnNames.includes('sales') && !columnNames.includes('sales_migrated')) {
+    db.exec('UPDATE products SET sold_stock = sales WHERE sold_stock = 0');
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_no TEXT UNIQUE NOT NULL,
       user_id INTEGER NOT NULL,
+      idempotency_key TEXT,
       total_amount REAL NOT NULL,
       status TEXT DEFAULT 'pending',
       address TEXT DEFAULT '',
       receiver_name TEXT DEFAULT '',
       receiver_phone TEXT DEFAULT '',
       remark TEXT DEFAULT '',
+      expire_at DATETIME,
+      stock_reserved INTEGER DEFAULT 0,
+      stock_confirmed INTEGER DEFAULT 0,
+      stock_released INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      paid_at DATETIME,
+      cancelled_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      UNIQUE(user_id, idempotency_key)
     )
   `);
+
+  const ordersColumns = db.prepare("PRAGMA table_info(orders)").all();
+  const orderColumnNames = ordersColumns.map(c => c.name);
+  
+  if (!orderColumnNames.includes('expire_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN expire_at DATETIME');
+  }
+  if (!orderColumnNames.includes('stock_reserved')) {
+    db.exec('ALTER TABLE orders ADD COLUMN stock_reserved INTEGER DEFAULT 0');
+  }
+  if (!orderColumnNames.includes('stock_confirmed')) {
+    db.exec('ALTER TABLE orders ADD COLUMN stock_confirmed INTEGER DEFAULT 0');
+  }
+  if (!orderColumnNames.includes('stock_released')) {
+    db.exec('ALTER TABLE orders ADD COLUMN stock_released INTEGER DEFAULT 0');
+  }
+  if (!orderColumnNames.includes('version')) {
+    db.exec('ALTER TABLE orders ADD COLUMN version INTEGER DEFAULT 0');
+  }
+  if (!orderColumnNames.includes('updated_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  }
+  if (!orderColumnNames.includes('paid_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN paid_at DATETIME');
+  }
+  if (!orderColumnNames.includes('cancelled_at')) {
+    db.exec('ALTER TABLE orders ADD COLUMN cancelled_at DATETIME');
+  }
+  if (!orderColumnNames.includes('idempotency_key')) {
+    db.exec('ALTER TABLE orders ADD COLUMN idempotency_key TEXT');
+  }
+
+  const existingIndexes = db.prepare("PRAGMA index_list(orders)").all().map(i => i.name);
+  if (!existingIndexes.includes('idx_orders_user_idempotency')) {
+    try {
+      db.exec('CREATE UNIQUE INDEX idx_orders_user_idempotency ON orders(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL');
+    } catch (e) {
+      console.log('Note: Partial unique index may not be supported, table-level constraint will handle it');
+    }
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_operations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      order_no TEXT NOT NULL,
+      product_id INTEGER NOT NULL,
+      operation_type TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      idempotent_key TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+  `);
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_status_expire ON orders(status, expire_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stock_operations_order ON stock_operations(order_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stock_operations_idempotent ON stock_operations(idempotent_key)');
 
   // 创建订单项表
   db.exec(`
@@ -155,7 +249,7 @@ function initDatabase() {
       { name: '真皮沙发', description: '头层牛皮 | 意式风格 | 客厅首选', price: 6999, original_price: 8999, stock: 20, sales: 320, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/furniture/annibale-colombo-sofa/1.webp' },
       { name: '睫毛膏', description: '浓密纤长 | 持久不晕 | 美妆必备', price: 69, original_price: 99, stock: 500, sales: 7800, category_id: 4, image: 'https://cdn.dummyjson.com/product-images/beauty/essence-mascara-lash-princess/1.webp' },
     ];
-    const stmt = db.prepare('INSERT INTO products (name, description, price, original_price, stock, sales, category_id, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const stmt = db.prepare('INSERT INTO products (name, description, price, original_price, available_stock, sold_stock, category_id, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     products.forEach(p => stmt.run(p.name, p.description, p.price, p.original_price, p.stock, p.sales, p.category_id, p.image));
     console.log('✅ 示例商品已创建');
   }
@@ -163,4 +257,4 @@ function initDatabase() {
   console.log('✅ 数据库初始化完成');
 }
 
-module.exports = { db, initDatabase };
+module.exports = { db, initDatabase, ORDER_TIMEOUT_MINUTES };

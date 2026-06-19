@@ -4,7 +4,24 @@ const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// 获取商品列表（公开）
+function mapProductStock(product, isAdmin = false) {
+  const mapped = { ...product };
+  mapped.stock = product.available_stock;
+  mapped.sales = product.sold_stock;
+  if (isAdmin) {
+    mapped.available_stock = product.available_stock;
+    mapped.reserved_stock = product.reserved_stock;
+    mapped.sold_stock = product.sold_stock;
+    mapped.total_stock = product.available_stock + product.reserved_stock;
+  } else {
+    delete mapped.available_stock;
+    delete mapped.reserved_stock;
+    delete mapped.sold_stock;
+  }
+  delete mapped.version;
+  return mapped;
+}
+
 router.get('/', (req, res) => {
   const { category_id, keyword, page = 1, limit = 10 } = req.query;
   const offset = (page - 1) * limit;
@@ -22,7 +39,6 @@ router.get('/', (req, res) => {
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
 
-  // 获取总数
   const countSql = sql.replace('SELECT p.*, c.name as category_name', 'SELECT COUNT(*) as total');
   const { total } = db.prepare(countSql).get(...params);
 
@@ -30,9 +46,10 @@ router.get('/', (req, res) => {
   params.push(parseInt(limit), parseInt(offset));
 
   const products = db.prepare(sql).all(...params);
+  const mappedProducts = products.map(p => mapProductStock(p, false));
 
   res.json({
-    list: products,
+    list: mappedProducts,
     total,
     page: parseInt(page),
     limit: parseInt(limit),
@@ -40,7 +57,6 @@ router.get('/', (req, res) => {
   });
 });
 
-// 获取商品详情（公开）
 router.get('/:id', (req, res) => {
   const { id } = req.params;
   const product = db.prepare(`
@@ -54,10 +70,9 @@ router.get('/:id', (req, res) => {
     return res.status(404).json({ error: '商品不存在' });
   }
 
-  res.json(product);
+  res.json(mapProductStock(product, false));
 });
 
-// 创建商品（管理员）
 router.post('/', authMiddleware, adminMiddleware, (req, res) => {
   const { name, description, price, original_price, stock, category_id, image, images, status } = req.body;
 
@@ -66,14 +81,13 @@ router.post('/', authMiddleware, adminMiddleware, (req, res) => {
   }
 
   const result = db.prepare(`
-    INSERT INTO products (name, description, price, original_price, stock, category_id, image, images, status)
+    INSERT INTO products (name, description, price, original_price, available_stock, category_id, image, images, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, description || '', price, original_price || price, stock || 0, category_id || null, image || '', JSON.stringify(images || []), status ?? 1);
 
   res.json({ message: '创建成功', id: result.lastInsertRowid });
 });
 
-// 更新商品（管理员）
 router.put('/:id', authMiddleware, adminMiddleware, (req, res) => {
   const { id } = req.params;
   const { name, description, price, original_price, stock, category_id, image, images, status } = req.body;
@@ -89,18 +103,28 @@ router.put('/:id', authMiddleware, adminMiddleware, (req, res) => {
       description = COALESCE(?, description),
       price = COALESCE(?, price),
       original_price = COALESCE(?, original_price),
-      stock = COALESCE(?, stock),
+      available_stock = COALESCE(?, available_stock),
       category_id = COALESCE(?, category_id),
       image = COALESCE(?, image),
       images = COALESCE(?, images),
       status = COALESCE(?, status)
     WHERE id = ?
-  `).run(name, description, price, original_price, stock, category_id, image, images ? JSON.stringify(images) : null, status, id);
+  `).run(
+    name, 
+    description, 
+    price, 
+    original_price, 
+    stock !== undefined ? stock : null, 
+    category_id, 
+    image, 
+    images ? JSON.stringify(images) : null, 
+    status, 
+    id
+  );
 
   res.json({ message: '更新成功' });
 });
 
-// 删除商品（管理员）
 router.delete('/:id', authMiddleware, adminMiddleware, (req, res) => {
   const { id } = req.params;
 
@@ -114,7 +138,6 @@ router.delete('/:id', authMiddleware, adminMiddleware, (req, res) => {
   res.json({ message: '删除成功' });
 });
 
-// 获取所有商品（管理员，包括下架）
 router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
   const { page = 1, limit = 10 } = req.query;
   const offset = (page - 1) * limit;
@@ -128,12 +151,32 @@ router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
     LIMIT ? OFFSET ?
   `).all(parseInt(limit), parseInt(offset));
 
+  const mappedProducts = products.map(p => mapProductStock(p, true));
+
   res.json({
-    list: products,
+    list: mappedProducts,
     total,
     page: parseInt(page),
     limit: parseInt(limit),
     totalPages: Math.ceil(total / limit)
+  });
+});
+
+router.get('/admin/stats/summary', authMiddleware, adminMiddleware, (req, res) => {
+  const stats = db.prepare(`
+    SELECT 
+      SUM(available_stock) as total_available,
+      SUM(reserved_stock) as total_reserved,
+      SUM(sold_stock) as total_sold,
+      COUNT(*) as product_count
+    FROM products
+  `).get();
+
+  res.json({
+    total_available: stats.total_available || 0,
+    total_reserved: stats.total_reserved || 0,
+    total_sold: stats.total_sold || 0,
+    product_count: stats.product_count || 0
   });
 });
 

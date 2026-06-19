@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const { initDatabase } = require('./database');
 const logger = require('./utils/logger');
+const { startOrderTimeoutScheduler } = require('./services/orderTimeoutService');
 
 // 确保日志目录存在
 const logsDir = path.join(__dirname, '../logs');
@@ -45,6 +46,10 @@ app.use((req, res, next) => {
 // 初始化数据库
 initDatabase();
 logger.info('数据库初始化完成');
+
+// 启动订单超时处理定时任务
+startOrderTimeoutScheduler();
+logger.info('订单超时处理服务已启动');
 
 // API 路由
 app.use('/api/auth', authRoutes);
