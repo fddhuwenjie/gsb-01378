@@ -1,64 +1,109 @@
 <view class="page">
-  <!-- 状态标签页 -->
-  <view class="status-tabs">
-    <view 
-      class="tab-item {{currentStatus === item.value ? 'active' : ''}}" 
-      wx:for="{{statusTabs}}" 
-      wx:key="value"
-      bindtap="switchTab"
-      data-status="{{item.value}}"
-    >
-      {{item.label}}
-    </view>
+  <view wx:if="{{loading}}" class="loading-container">
+    <text>加载中...</text>
   </view>
 
-  <!-- 订单列表 -->
-  <view class="order-list">
-    <view class="order-card" wx:for="{{orders}}" wx:key="id">
-      <view class="order-header">
-        <text class="order-no">订单号：{{item.order_no}}</text>
-        <text class="order-status status-{{item.status}}">
-          {{item.status === 'pending' ? '待付款' : item.status === 'paid' ? '待发货' : item.status === 'shipped' ? '待收货' : item.status === 'completed' ? '已完成' : '已取消'}}
-        </text>
+  <view wx:elif="{{order}}" class="order-detail">
+    <view class="status-header status-{{order.status}}">
+      <view class="status-icon">
+        <text wx:if="{{order.status === 'pending'}}">⏳</text>
+        <text wx:elif="{{order.status === 'paid'}}">✅</text>
+        <text wx:elif="{{order.status === 'shipped'}}">🚚</text>
+        <text wx:elif="{{order.status === 'completed'}}">🎉</text>
+        <text wx:elif="{{order.status === 'cancelled'}}">❌</text>
+        <text wx:elif="{{order.status === 'timeout'}}">⏰</text>
       </view>
+      <view class="status-text">{{order.status === 'pending' ? '等待付款' : order.status === 'paid' ? '付款成功' : order.status === 'shipped' ? '已发货' : order.status === 'completed' ? '交易完成' : order.status === 'timeout' ? '订单已超时' : '订单已取消'}}</view>
       
-      <view class="order-items">
-        <view class="order-item" wx:for="{{item.items}}" wx:for-item="product" wx:key="id">
-          <image class="item-image" src="{{product.product_image}}" mode="aspectFill" />
-          <view class="item-info">
-            <text class="item-name">{{product.product_name}}</text>
-            <view class="item-bottom">
-              <text class="item-price">¥{{product.price}}</text>
-              <text class="item-quantity">×{{product.quantity}}</text>
+      <view wx:if="{{order.status === 'pending' && !order.pay_expired}}" class="countdown-banner">
+        <view class="countdown-label">请在以下时间内完成支付</view>
+        <view class="countdown-time">{{order.countdown_text}}</view>
+        <view class="countdown-tip">超时后订单将自动关闭，库存将释放</view>
+      </view>
+
+      <view wx:if="{{order.status === 'pending' && order.pay_expired}}" class="timeout-banner">
+        <view class="timeout-text">订单已超时关闭</view>
+        <view class="timeout-tip">预占库存已自动释放</view>
+      </view>
+
+      <view wx:if="{{order.status === 'timeout'}}" class="timeout-banner">
+        <view class="timeout-text">订单已超时关闭</view>
+        <view class="timeout-tip">预占库存已自动释放</view>
+      </view>
+    </view>
+
+    <view class="section address-section">
+      <view class="section-title">收货信息</view>
+      <view class="address-info">
+        <view class="address-user">{{order.receiver_name}} <text class="phone">{{order.receiver_phone}}</text></view>
+        <view class="address-detail">{{order.address}}</view>
+      </view>
+    </view>
+
+    <view class="section goods-section">
+      <view class="section-title">商品信息</view>
+      <view class="goods-list">
+        <view class="goods-item" wx:for="{{order.items}}" wx:key="id">
+          <image class="goods-image" src="{{item.product_image}}" mode="aspectFill" />
+          <view class="goods-info">
+            <view class="goods-name">{{item.product_name}}</view>
+            <view class="goods-bottom">
+              <text class="goods-price">¥{{item.price}}</text>
+              <text class="goods-quantity">×{{item.quantity}}</text>
             </view>
           </view>
         </view>
       </view>
-      
-      <view class="order-footer">
-        <view class="order-total">
-          <text>共 {{item.items.length}} 件商品，合计：</text>
-          <text class="total-price">¥{{item.total_amount}}</text>
-        </view>
-        <view class="order-actions" wx:if="{{item.status === 'pending'}}">
-          <view class="action-btn outline" bindtap="cancelOrder" data-id="{{item.id}}">取消订单</view>
-          <view class="action-btn primary" bindtap="goToPay" data-id="{{item.id}}">去支付</view>
-        </view>
+    </view>
+
+    <view class="section remark-section" wx:if="{{order.remark}}">
+      <view class="section-title">订单备注</view>
+      <view class="remark-text">{{order.remark}}</view>
+    </view>
+
+    <view class="section info-section">
+      <view class="section-title">订单信息</view>
+      <view class="info-row">
+        <text class="info-label">订单编号</text>
+        <text class="info-value">{{order.order_no}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">下单时间</text>
+        <text class="info-value">{{order.created_at}}</text>
+      </view>
+      <view class="info-row" wx:if="{{order.pay_expire_time && order.status === 'pending'}}">
+        <text class="info-label">支付截止</text>
+        <text class="info-value">{{order.pay_expire_time}}</text>
+      </view>
+      <view class="info-row" wx:if="{{order.paid_at}}">
+        <text class="info-label">支付时间</text>
+        <text class="info-value">{{order.paid_at}}</text>
+      </view>
+      <view class="info-row total-row">
+        <text class="info-label">订单金额</text>
+        <text class="info-value total-amount">¥{{order.total_amount}}</text>
       </view>
     </view>
-  </view>
 
-  <!-- 加载状态 -->
-  <view class="loading-more" wx:if="{{loading}}">
-    <text>加载中...</text>
-  </view>
-  <view class="no-more" wx:if="{{!hasMore && orders.length > 0}}">
-    <text>没有更多了</text>
-  </view>
-  
-  <!-- 空状态 -->
-  <view class="empty" wx:if="{{!loading && orders.length === 0}}">
-    <text class="empty-icon">📋</text>
-    <text class="empty-text">暂无订单</text>
+    <view class="footer-actions">
+      <view wx:if="{{order.status === 'pending' && !order.pay_expired}}" class="action-group">
+        <view class="action-btn outline" bindtap="cancelOrder">取消订单</view>
+        <view class="action-btn primary" bindtap="goToPay">立即支付</view>
+      </view>
+
+      <view wx:if="{{order.status === 'pending' && order.pay_expired}}" class="action-group">
+        <view class="action-btn outline" bindtap="goBack">返回</view>
+        <view class="action-btn primary" bindtap="goToHome">重新选购</view>
+      </view>
+
+      <view wx:if="{{order.status === 'timeout' || order.status === 'cancelled'}}" class="action-group">
+        <view class="action-btn outline" bindtap="goBack">返回</view>
+        <view class="action-btn primary" bindtap="goToHome">重新选购</view>
+      </view>
+
+      <view wx:if="{{order.status === 'paid' || order.status === 'shipped' || order.status === 'completed'}}" class="action-group">
+        <view class="action-btn outline" bindtap="goBack">返回订单列表</view>
+      </view>
+    </view>
   </view>
 </view>

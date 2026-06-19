@@ -1,4 +1,3 @@
-// 加载环境变量
 require('dotenv').config();
 
 const express = require('express');
@@ -7,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { initDatabase } = require('./database');
 const logger = require('./utils/logger');
+const stockService = require('./services/stockService');
 
 // 确保日志目录存在
 const logsDir = path.join(__dirname, '../logs');
@@ -42,9 +42,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// 初始化数据库
 initDatabase();
+stockService.migrateOldData();
 logger.info('数据库初始化完成');
+
+const timeoutChecker = stockService.startTimeoutChecker(60000);
 
 // API 路由
 app.use('/api/auth', authRoutes);
@@ -84,9 +86,21 @@ app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🌍 环境: ${process.env.NODE_ENV || 'development'}`);
 });
 
-// 优雅退出
 process.on('SIGTERM', () => {
   logger.info('收到SIGTERM信号，准备关闭服务...');
+  if (timeoutChecker) {
+    clearInterval(timeoutChecker);
+    logger.info('订单超时检查器已停止');
+  }
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  logger.info('收到SIGINT信号，准备关闭服务...');
+  if (timeoutChecker) {
+    clearInterval(timeoutChecker);
+    logger.info('订单超时检查器已停止');
+  }
   process.exit(0);
 });
 
