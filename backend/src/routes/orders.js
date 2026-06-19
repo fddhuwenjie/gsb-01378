@@ -1,19 +1,27 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const { db } = require('../database');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { reserveStockForOrder, releaseStockForOrder } = require('../services/stockService');
+const { calculateExpireTime, getOrderTimeRemaining, processTimeoutOrders } = require('../services/orderTimeoutService');
 
 const router = express.Router();
 
-// 生成订单号
 function generateOrderNo() {
   const date = new Date();
   const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const random = crypto.randomBytes(3).toString('hex').toUpperCase();
   return `ORD${dateStr}${random}`;
 }
 
-// 获取用户订单列表
+function enrichOrderWithTimeInfo(order) {
+  const timeInfo = getOrderTimeRemaining(order);
+  return {
+    ...order,
+    time_remaining: timeInfo
+  };
+}
+
 router.get('/', authMiddleware, (req, res) => {
   const { status, page = 1, limit = 10 } = req.query;
   const offset = (page - 1) * limit;
@@ -22,8 +30,11 @@ router.get('/', authMiddleware, (req, res) => {
   const params = [req.user.id];
 
   if (status) {
-    sql += ' AND status = ?';
-    params.push(status);
+    const validStatuses = ['pending', 'paid', 'shipped', 'completed', 'cancelled', 'timeout'];
+    if (validStatuses.includes(status)) {
+      sql += ' AND status = ?';
+      params.push(status);
+    }
   }
 
   const countSql = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
@@ -34,10 +45,9 @@ router.get('/', authMiddleware, (req, res) => {
 
   const orders = db.prepare(sql).all(...params);
 
-  // 获取订单项
   const ordersWithItems = orders.map(order => {
     const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
-    return { ...order, items };
+    return enrichOrderWithTimeInfo({ ...order, items });
   });
 
   res.json({
@@ -49,7 +59,6 @@ router.get('/', authMiddleware, (req, res) => {
   });
 });
 
-// 获取订单详情
 router.get('/:id', authMiddleware, (req, res) => {
   const { id } = req.params;
   
@@ -64,20 +73,60 @@ router.get('/:id', authMiddleware, (req, res) => {
     return res.status(404).json({ error: '订单不存在' });
   }
 
+  if (order.status === 'pending' && order.expire_at) {
+    const timeInfo = getOrderTimeRemaining(order);
+    if (timeInfo && timeInfo.expired) {
+      try {
+        const closeExpiredOrder = db.transaction((orderId) => {
+          const o = db.prepare('SELECT id, status, stock_reserved, stock_released FROM orders WHERE id = ?').get(orderId);
+          if (o && o.status === 'pending' && o.stock_released === 0) {
+            releaseStockForOrder(orderId);
+            db.prepare(`
+              UPDATE orders 
+              SET status = 'timeout', cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+              WHERE id = ? AND status = 'pending' AND stock_released = 1
+            `).run(orderId);
+          }
+        });
+        closeExpiredOrder(order.id);
+        order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+      } catch (err) {
+        console.error('关闭过期订单失败:', err);
+      }
+    }
+  }
+
   const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
 
-  res.json({ ...order, items });
+  res.json(enrichOrderWithTimeInfo({ ...order, items }));
 });
 
-// 创建订单
 router.post('/', authMiddleware, (req, res) => {
-  const { items, address, receiver_name, receiver_phone, remark } = req.body;
+  const { items, address, receiver_name, receiver_phone, remark, idempotency_key } = req.body;
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: '订单商品不能为空' });
   }
 
-  // 计算总金额并验证库存
+  const clientIdempotencyKey = idempotency_key || crypto.randomBytes(16).toString('hex');
+
+  if (clientIdempotencyKey) {
+    const existingOrder = db.prepare(`
+      SELECT * FROM orders WHERE user_id = ? AND idempotency_key = ?
+    `).get(req.user.id, clientIdempotencyKey);
+    
+    if (existingOrder) {
+      const existingItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existingOrder.id);
+      return res.json({
+        message: '订单创建成功',
+        order_no: existingOrder.order_no,
+        order_id: existingOrder.id,
+        expire_at: existingOrder.expire_at,
+        duplicated: true
+      });
+    }
+  }
+
   let totalAmount = 0;
   const productList = [];
 
@@ -88,55 +137,77 @@ router.post('/', authMiddleware, (req, res) => {
       return res.status(400).json({ error: `商品ID ${item.product_id} 不存在或已下架` });
     }
 
-    if (product.stock < item.quantity) {
-      return res.status(400).json({ error: `商品 ${product.name} 库存不足` });
+    if (product.available_stock < item.quantity) {
+      return res.status(400).json({ error: `商品「${product.name}」库存不足，仅剩 ${product.available_stock} 件` });
     }
 
     totalAmount += product.price * item.quantity;
     productList.push({ product, quantity: item.quantity });
   }
 
-  // 使用事务确保数据一致性
+  const expireAt = calculateExpireTime();
+
   const createOrderTransaction = db.transaction(() => {
-    // 创建订单
     const orderNo = generateOrderNo();
     const orderResult = db.prepare(`
-      INSERT INTO orders (order_no, user_id, total_amount, address, receiver_name, receiver_phone, remark)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(orderNo, req.user.id, totalAmount, address || '', receiver_name || '', receiver_phone || '', remark || '');
+      INSERT INTO orders (order_no, user_id, idempotency_key, total_amount, status, address, receiver_name, receiver_phone, remark, expire_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+    `).run(orderNo, req.user.id, clientIdempotencyKey, totalAmount, address || '', receiver_name || '', receiver_phone || '', remark || '', expireAt);
 
     const orderId = orderResult.lastInsertRowid;
 
-    // 创建订单项并更新库存
     const insertItem = db.prepare(`
       INSERT INTO order_items (order_id, product_id, product_name, product_image, quantity, price)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
 
-    const updateStock = db.prepare('UPDATE products SET stock = stock - ?, sales = sales + ? WHERE id = ?');
-
     for (const { product, quantity } of productList) {
       insertItem.run(orderId, product.id, product.name, product.image, quantity, product.price);
-      updateStock.run(quantity, quantity, product.id);
     }
 
-    // 清空购物车中的商品
-    const productIds = items.map(i => i.product_id);
-    db.prepare(`DELETE FROM cart WHERE user_id = ? AND product_id IN (${productIds.join(',')})`).run(req.user.id);
+    reserveStockForOrder(orderId, items);
 
-    return { orderNo, orderId };
+    const productIds = items.map(i => i.product_id);
+    if (productIds.length > 0) {
+      const placeholders = productIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM cart WHERE user_id = ? AND product_id IN (${placeholders})`).run(req.user.id, ...productIds);
+    }
+
+    return { orderNo, orderId, expireAt };
   });
 
   try {
-    const { orderNo, orderId } = createOrderTransaction();
-    res.json({ message: '订单创建成功', order_no: orderNo, order_id: orderId });
+    const { orderNo, orderId, expireAt } = createOrderTransaction();
+    res.json({ 
+      message: '订单创建成功', 
+      order_no: orderNo, 
+      order_id: orderId,
+      expire_at: expireAt,
+      idempotency_key: clientIdempotencyKey
+    });
   } catch (err) {
     console.error('订单创建失败:', err);
+    if (err.message && (err.message.includes('UNIQUE constraint failed: orders.user_id, orders.idempotency_key') || err.message.includes('UNIQUE constraint failed'))) {
+      const existingOrder = db.prepare(`
+        SELECT * FROM orders WHERE user_id = ? AND idempotency_key = ?
+      `).get(req.user.id, clientIdempotencyKey);
+      if (existingOrder) {
+        return res.json({
+          message: '订单创建成功',
+          order_no: existingOrder.order_no,
+          order_id: existingOrder.id,
+          expire_at: existingOrder.expire_at,
+          duplicated: true
+        });
+      }
+    }
+    if (err.message.includes('并发冲突') || err.message.includes('库存不足')) {
+      return res.status(409).json({ error: err.message });
+    }
     res.status(500).json({ error: '订单创建失败，请重试' });
   }
 });
 
-// 取消订单
 router.put('/:id/cancel', authMiddleware, (req, res) => {
   const { id } = req.params;
 
@@ -146,21 +217,28 @@ router.put('/:id/cancel', authMiddleware, (req, res) => {
     return res.status(404).json({ error: '订单不存在' });
   }
 
+  if (order.status === 'cancelled' || order.status === 'timeout') {
+    return res.json({ message: '订单已取消' });
+  }
+
   if (order.status !== 'pending') {
     return res.status(400).json({ error: '只能取消待付款订单' });
   }
 
-  // 使用事务确保数据一致性
   const cancelOrderTransaction = db.transaction(() => {
-    // 恢复库存
-    const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
-    const restoreStock = db.prepare('UPDATE products SET stock = stock + ?, sales = sales - ? WHERE id = ?');
+    releaseStockForOrder(order.id);
 
-    for (const item of items) {
-      restoreStock.run(item.quantity, item.quantity, item.product_id);
+    const updateResult = db.prepare(`
+      UPDATE orders 
+      SET status = 'cancelled', 
+          cancelled_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ? AND status = 'pending' AND stock_released = 1
+    `).run(id);
+
+    if (updateResult.changes === 0) {
+      throw new Error('订单状态更新失败，可能已被处理');
     }
-
-    db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('cancelled', id);
   });
 
   try {
@@ -172,7 +250,6 @@ router.put('/:id/cancel', authMiddleware, (req, res) => {
   }
 });
 
-// 管理员：获取所有订单
 router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
   const { status, page = 1, limit = 10 } = req.query;
   const offset = (page - 1) * limit;
@@ -195,7 +272,7 @@ router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
 
   const ordersWithItems = orders.map(order => {
     const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
-    return { ...order, items };
+    return enrichOrderWithTimeInfo({ ...order, items });
   });
 
   res.json({
@@ -207,24 +284,60 @@ router.get('/admin/all', authMiddleware, adminMiddleware, (req, res) => {
   });
 });
 
-// 管理员：更新订单状态
 router.put('/admin/:id/status', authMiddleware, adminMiddleware, (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
-  const validStatuses = ['pending', 'paid', 'shipped', 'completed', 'cancelled'];
+  const validStatuses = ['pending', 'paid', 'shipped', 'completed', 'cancelled', 'timeout'];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ error: '无效的订单状态' });
   }
 
-  const order = db.prepare('SELECT id FROM orders WHERE id = ?').get(id);
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   if (!order) {
     return res.status(404).json({ error: '订单不存在' });
   }
 
-  db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id);
+  const updateTransaction = db.transaction(() => {
+    if (status === 'cancelled' && order.status === 'pending' && order.stock_released === 0) {
+      releaseStockForOrder(id);
+      const updateResult = db.prepare(`
+        UPDATE orders 
+        SET status = 'cancelled', 
+            cancelled_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ? AND stock_released = 1
+      `).run(id);
+      if (updateResult.changes === 0) {
+        throw new Error('状态更新失败');
+      }
+      return;
+    }
 
-  res.json({ message: '状态更新成功' });
+    db.prepare(`
+      UPDATE orders 
+      SET status = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `).run(status, id);
+  });
+
+  try {
+    updateTransaction();
+    res.json({ message: '状态更新成功' });
+  } catch (err) {
+    console.error('更新订单状态失败:', err);
+    res.status(500).json({ error: '更新失败' });
+  }
+});
+
+router.post('/admin/process-timeout', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const count = processTimeoutOrders();
+    res.json({ message: `处理了 ${count} 个超时订单`, count });
+  } catch (err) {
+    console.error('处理超时订单失败:', err);
+    res.status(500).json({ error: '处理失败' });
+  }
 });
 
 module.exports = router;
