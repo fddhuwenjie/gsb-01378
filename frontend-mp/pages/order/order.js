@@ -1,5 +1,11 @@
 const app = getApp()
 
+function generateIdempotentKey() {
+  const timestamp = Date.now()
+  const random = Math.random().toString(36).substring(2, 10)
+  return `order_${timestamp}_${random}`
+}
+
 Page({
   data: {
     items: [],
@@ -8,10 +14,13 @@ Page({
     showAddressPicker: false,
     remark: '',
     totalAmount: 0,
-    submitting: false
+    submitting: false,
+    idempotentKey: ''
   },
 
   onLoad(options) {
+    this.setData({ idempotentKey: generateIdempotentKey() })
+    
     if (options.items) {
       try {
         const items = JSON.parse(decodeURIComponent(options.items))
@@ -26,7 +35,6 @@ Page({
   },
 
   onShow() {
-    // 从地址页返回时刷新地址列表
     this.loadAddresses()
   },
 
@@ -35,7 +43,6 @@ Page({
     app.request({ url: '/addresses' }).then(function(res) {
       const addresses = res || []
       that.setData({ addresses })
-      // 自动选择默认地址
       if (!that.data.selectedAddress && addresses.length > 0) {
         const defaultAddr = addresses.find(a => a.is_default) || addresses[0]
         that.setData({ selectedAddress: defaultAddr })
@@ -69,7 +76,7 @@ Page({
   },
 
   async submitOrder() {
-    const { items, selectedAddress, remark, submitting } = this.data
+    const { items, selectedAddress, remark, submitting, idempotentKey } = this.data
     
     if (submitting) return
     
@@ -94,23 +101,28 @@ Page({
           address: selectedAddress.region + ' ' + selectedAddress.detail,
           receiver_name: selectedAddress.name,
           receiver_phone: selectedAddress.phone,
-          remark
+          remark,
+          idempotent_key: idempotentKey
         }
       })
 
       wx.showToast({
         title: '下单成功',
-        icon: 'success'
+        icon: 'success',
+        duration: 1000
       })
 
       setTimeout(() => {
         wx.redirectTo({
-          url: `/pages/order-detail/order-detail`
+          url: `/pages/order-pay/order-pay?order_id=${res.order_id}`
         })
-      }, 1500)
+      }, 1000)
     } catch (err) {
       console.error('提交订单失败', err)
-    } finally {
+      wx.showToast({
+        title: err.error || '下单失败',
+        icon: 'none'
+      })
       this.setData({ submitting: false })
     }
   }
